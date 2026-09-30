@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OmniScan</title>
+  <meta name="description" content="Turn photos of any document, even messy handwriting, into Excel, Word or PDF.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="bg-glow" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" class="logo" aria-hidden="true"><path d="M4 10V4h6M22 4h6v6M28 22v6h-6M10 28H4v-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M8 16h16" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" class="logo-beam"/></svg>
+      <span>Omni<b>Scan</b></span>
+    </div>
+    <div class="top-actions">
+      <span id="engineStatus" class="pill"><i class="dot"></i><span>Checking engines…</span></span>
+      <button id="settingsBtn" class="icon-btn" title="Settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <!-- ============ STEP 1: capture ============ -->
+    <section id="captureView" class="view">
+      <div class="hero">
+        <h1>Any page. Any handwriting.<br><span class="grad">Straight into Excel, Word or PDF.</span></h1>
+        <p class="sub">Printed forms, scribbled notes, ledgers, receipts, whiteboards. OmniScan reads every mark, down to a single decimal point, and flags anything it isn't sure about.</p>
+      </div>
+
+      <div class="grid-2">
+        <div class="panel">
+          <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Add document images">
+            <div class="dz-corners" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <svg viewBox="0 0 48 48" class="dz-icon" aria-hidden="true"><path d="M24 32V12m0 0-8 8m8-8 8 8" /><path d="M8 30v6a4 4 0 0 0 4 4h24a4 4 0 0 0 4-4v-6"/></svg>
+            <p class="dz-title">Drop pages here</p>
+            <p class="dz-hint">or click to browse · paste with Ctrl/⌘+V · JPG, PNG, WEBP, TIFF, BMP</p>
+            <div class="dz-buttons">
+              <button type="button" class="btn ghost" id="browseBtn">Browse files</button>
+              <button type="button" class="btn ghost" id="cameraBtn">
+                <svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z"/><circle cx="12" cy="13" r="3.5"/></svg>
+                Use camera
+              </button>
+            </div>
+            <input id="fileInput" type="file" accept="image/*" multiple hidden>
+            <input id="cameraInput" type="file" accept="image/*" capture="environment" hidden>
+          </div>
+          <div id="thumbs" class="thumbs"></div>
+          <p id="thumbHint" class="muted small hidden">Drag thumbnails to reorder pages. Each image becomes one page.</p>
+        </div>
+
+        <div class="panel controls">
+          <div class="field">
+            <label>Recognition engine</label>
+            <div class="seg" data-name="engine">
+              <button data-value="auto" class="on">Auto</button>
+              <button data-value="claude">AI vision</button>
+              <button data-value="tesseract">Offline</button>
+            </div>
+            <p class="muted small" id="engineHint">Auto uses AI vision when a key is set, otherwise offline OCR.</p>
+          </div>
+
+          <div class="field">
+            <label>Precision</label>
+            <div class="seg" data-name="precision">
+              <button data-value="fast">Fast</button>
+              <button data-value="high" class="on">High</button>
+              <button data-value="max">Maximum</button>
+            </div>
+            <p class="muted small" id="precisionHint"></p>
+          </div>
+
+          <div class="field">
+            <label class="switch">
+              <input type="checkbox" id="enhance" checked>
+              <span class="track"><span class="knob"></span></span>
+              <span>Auto-enhance: flatten page, remove shadows, deskew, boost faint ink</span>
+            </label>
+          </div>
+
+          <div class="field">
+            <label>Output formats <span class="muted small">(pick one or more)</span></label>
+            <div class="formats" id="formats">
+              <button class="fmt on" data-fmt="xlsx"><span class="fmt-ic x">XLS</span><b>Excel</b><small>Tables → sheets</small></button>
+              <button class="fmt" data-fmt="docx"><span class="fmt-ic w">DOC</span><b>Word</b><small>Editable layout</small></button>
+              <button class="fmt" data-fmt="pdf"><span class="fmt-ic p">PDF</span><b>PDF</b><small>Clean, searchable</small></button>
+              <button class="fmt" data-fmt="csv"><span class="fmt-ic c">CSV</span><b>CSV</b><small>Raw table data</small></button>
+              <button class="fmt" data-fmt="md"><span class="fmt-ic m">MD</span><b>Markdown</b><small>For notes apps</small></button>
+              <button class="fmt" data-fmt="txt"><span class="fmt-ic t">TXT</span><b>Text</b><small>Plain text</small></button>
+              <button class="fmt" data-fmt="json"><span class="fmt-ic j">{ }</span><b>JSON</b><small>For developers</small></button>
+            </div>
+          </div>
+
+          <button id="scanBtn" class="btn primary big" disabled>
+            <span class="beam" aria-hidden="true"></span>
+            <svg viewBox="0 0 24 24"><path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4M4 12h16"/></svg>
+            <span id="scanLabel">Add a page to start</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ STEP 2: scanning ============ -->
+    <section id="scanView" class="view hidden">
+      <div class="scan-stage panel">
+        <div class="scan-frame">
+          <img id="scanImg" alt="Page being scanned">
+          <div class="laser" aria-hidden="true"></div>
+          <div class="scan-grid" aria-hidden="true"></div>
+        </div>
+        <div class="scan-log">
+          <h2>Scanning <span id="scanCount"></span></h2>
+          <ol id="scanSteps" class="steps"></ol>
+          <div class="progress"><i id="progressBar"></i></div>
+          <p class="muted small" id="scanTimer">0.0 s</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ STEP 3: results ============ -->
+    <section id="resultView" class="view hidden">
+      <div class="result-bar panel">
+        <div class="stats" id="stats"></div>
+        <div class="result-actions">
+          <button class="btn ghost" id="newScanBtn">New scan</button>
+          <button class="btn ghost" id="copyBtn">Copy text</button>
+          <div class="dl-group" id="dlGroup"></div>
+        </div>
+      </div>
+
+      <div class="legend muted small">
+        <span><i class="sw unc"></i> Low-confidence reading, please check</span>
+        <span>Click any text or cell to edit it; downloads include your edits.</span>
+      </div>
+
+      <div class="page-tabs" id="pageTabs"></div>
+
+      <div class="grid-result">
+        <div class="panel viewer">
+          <div class="viewer-bar">
+            <div class="seg small" data-name="imgmode">
+              <button data-value="original" class="on">Original</button>
+              <button data-value="enhanced">Enhanced</button>
+            </div>
+            <span class="muted small" id="pageSteps"></span>
+          </div>
+          <div class="viewer-img" id="viewerImg"><img id="resultImg" alt="Scanned page"></div>
+        </div>
+        <div class="panel doc" id="docView"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Settings -->
+  <dialog id="settingsDlg" class="dlg">
+    <form method="dialog">
+      <h2>Settings</h2>
+      <label for="apiKey">Anthropic API key <span class="muted small">(for AI vision handwriting recognition)</span></label>
+      <input id="apiKey" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
+      <p class="muted small">Stored only in this browser and sent only to your own OmniScan server. Leave empty to use the server's key, if it has one.</p>
+      <label for="fileName">Default file name</label>
+      <input id="fileName" type="text" placeholder="scan">
+      <div class="dlg-actions">
+        <button value="cancel" class="btn ghost">Close</button>
+        <button value="save" id="saveSettings" class="btn primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Live camera -->
+  <dialog id="cameraDlg" class="dlg camera">
+    <div class="cam-wrap">
+      <video id="camVideo" autoplay playsinline muted></video>
+      <div class="cam-guide" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    </div>
+    <div class="dlg-actions">
+      <button class="btn ghost" id="camClose">Done</button>
+      <span class="muted small" id="camCount">0 captured</span>
+      <button class="btn primary" id="camShoot">Capture page</button>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
