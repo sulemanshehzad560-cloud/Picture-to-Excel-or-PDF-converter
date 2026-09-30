@@ -279,7 +279,9 @@ client = TestClient(app)
 
 
 def test_index_and_engines():
-    assert "OmniScan" in client.get("/").text
+    r = client.get("/")
+    assert "OmniScan" in r.text
+    assert r.headers["cross-origin-embedder-policy"] == "require-corp"
     e = client.get("/api/engines").json()
     assert {"claude", "tesseract"} <= set(e)
 

@@ -4,3 +4,18 @@ __pycache__/
 .env
 .pytest_cache/
 tests/output/
+scratch/
+node_modules/
+dist/
+web/public/models/
+android/app/release/
+*.keystore
+*.jks
+keystore.properties
+web/public/ort/
+
+# Capacitor copies the built web app here on `npx cap sync`
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+android/keystore.properties

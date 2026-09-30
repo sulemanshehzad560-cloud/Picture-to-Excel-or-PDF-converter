@@ -1,6 +1,11 @@
-"""HTTP API + static UI.
+"""HTTP API + the OmniScan web app.
 
-    uvicorn app.main:app --reload        then open http://localhost:8000
+    npm install && npm run build          # builds the on-device OCR web app into dist/
+    uvicorn app.main:app                   # then open http://localhost:8000
+
+The web app does all recognition on the user's device (no key needed). This server adds an
+optional "AI vision" engine (Claude) when ANTHROPIC_API_KEY is set, and keeps the JSON API
+(/api/extract, /api/export) for scripts and integrations.
 """
 
 from __future__ import annotations
@@ -13,7 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -22,17 +27,20 @@ from .engines import EngineError, engine_status, pick_engine
 from .exporters import export
 from .schema import ExtractedDocument
 
-STATIC = Path(__file__).parent / "static"
+DIST = Path(__file__).resolve().parent.parent / "dist"
 MAX_FILES = 30
 MAX_BYTES = 40 * 1024 * 1024
 
-app = FastAPI(title="Picture to Excel / Word / PDF converter")
-app.mount("/static", StaticFiles(directory=STATIC), name="static")
+app = FastAPI(title="OmniScan: picture to Excel / Word / PDF")
 
 
-@app.get("/")
-def index():
-    return FileResponse(STATIC / "index.html")
+@app.middleware("http")
+async def cross_origin_isolation(request, call_next):
+    # Lets the in-browser OCR engine use several CPU threads (SharedArrayBuffer).
+    response = await call_next(request)
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
+    return response
 
 
 @app.get("/api/engines")
@@ -119,3 +127,12 @@ def export_file(req: ExportRequest):
         raise HTTPException(400, str(exc)) from exc
     stem = re.sub(r"[^\w\- ]+", "", req.filename or req.document.title or "scan").strip()[:80] or "scan"
     return Response(data, media_type=media, headers={"Content-Disposition": f'attachment; filename="{stem}.{ext}"'})
+
+
+# The built web app is served last so the /api routes above take precedence.
+if DIST.is_dir():
+    app.mount("/", StaticFiles(directory=DIST, html=True), name="web")
+else:
+    @app.get("/")
+    def index():
+        return Response("OmniScan web app not built yet: run `npm install && npm run build`.", media_type="text/plain")

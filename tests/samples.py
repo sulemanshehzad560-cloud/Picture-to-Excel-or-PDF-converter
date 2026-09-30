@@ -11,6 +11,7 @@ fall back to DejaVu, which still exercises every degradation.
 from __future__ import annotations
 
 import io
+import json
 import math
 import os
 import random
@@ -50,8 +51,8 @@ class Canvas:
                 self.draw.line([(60, y), (w - 60, y)], fill=(170, 195, 230), width=2)
             self.draw.line([(150, 0), (150, h)], fill=(235, 150, 150), width=2)
 
-    def hand(self, xy, text, font: str, size=54, ink=(20, 30, 90), jitter=1.0):
-        """Draw text word by word with human-like wobble."""
+    def hand(self, xy, text, font: str, size=54, ink=(20, 30, 90), jitter=1.0, slant=0.0):
+        """Draw text word by word with human-like wobble; `slant` shears letters (0.3 = strong italic)."""
         x, y = xy
         for word in text.split(" "):
             s = int(size * (1 + self.rng.uniform(-0.06, 0.06) * jitter))
@@ -61,6 +62,11 @@ class Canvas:
             layer = Image.new("RGBA", (ww, wh), (0, 0, 0, 0))
             shade = tuple(max(0, min(255, c + self.rng.randint(-15, 15))) for c in ink)
             ImageDraw.Draw(layer).text((2, 2), word, font=f, fill=shade + (255,))
+            if slant:
+                sh = slant + self.rng.uniform(-0.08, 0.08) * jitter
+                extra = int(abs(sh) * wh)
+                layer = layer.transform((ww + extra, wh), Image.AFFINE, (1, sh, -extra if sh > 0 else 0, 0, 1, 0),
+                                        resample=Image.BICUBIC)
             layer = layer.rotate(self.rng.uniform(-3, 3) * jitter, resample=Image.BICUBIC, expand=True)
             dy = int(self.rng.uniform(-5, 5) * jitter)
             self.img.paste(layer, (int(x), int(y + dy)), layer)
@@ -213,6 +219,61 @@ def messy_note(quality="bad", font="ReenieBeanie", seed=4, **deg) -> Sample:
     return Sample(f"messy_note_{quality}", quality, encode(img), NOTE_LINES)
 
 
+FORM_HAND = [("Name", "Ayesha K. Rahman"), ("Date", "07/08/2026"), ("Phone", "0345 812 7703"),
+             ("Amount", "3,480.50"), ("Ref", "INV-2291")]
+
+
+def messy_clean_note(font="ReenieBeanie", name="messy_clean_note", seed=11, jitter=2.0, slant=0.0, photo_=False) -> Sample:
+    """Messy handwriting on a clean page: a direct upload / scanner-app image, no paper noise."""
+    c = Canvas(ruled=True, seed=seed, paper=(252, 252, 250))
+    y = 180 - 64
+    for line in NOTE_LINES:
+        c.hand((175 + c.rng.randint(-15, 30), y + c.rng.randint(-8, 8)), line, font_path(font), size=64,
+               ink=(20, 20, 45), jitter=jitter, slant=slant)
+        y += 128
+    img = to_cv(c.img)
+    if photo_:
+        img = photo(img, random.Random(seed), tilt=4, persp=0.03, bg=(120, 110, 100))
+    return Sample(name, "messy", encode(img), NOTE_LINES)
+
+
+def messy_clean_table(font="HomemadeApple", seed=12, jitter=1.6, slant=0.15) -> Sample:
+    c = Canvas(seed=seed, paper=(252, 252, 250))
+    c.hand((140, 110), "Stationery order", font_path(font), size=62, jitter=jitter, slant=slant)
+    xs = c.grid(140, 280, [560, 200, 260, 260], 110, len(TABLE), color=(30, 30, 60), width=4)
+    for r, row in enumerate(TABLE):
+        for ci, cell in enumerate(row):
+            if cell:
+                c.hand((xs[ci] + 18 + c.rng.randint(-6, 20), 280 + r * 110 + 14 + c.rng.randint(-6, 8)), cell,
+                       font_path(font), size=50, jitter=jitter, slant=slant)
+    return Sample("messy_clean_table", "messy", encode(to_cv(c.img)), ["Stationery order"], TABLE)
+
+
+def messy_clean_borderless(font="ReenieBeanie", seed=13) -> Sample:
+    """A handwritten list with amounts in columns but no ruled lines: the hardest table case."""
+    c = Canvas(seed=seed, paper=(252, 252, 250))
+    c.hand((140, 110), "Stationery order", font_path(font), size=72, jitter=1.6)
+    cols = [140, 700, 900, 1160]
+    for r, row in enumerate(TABLE):
+        for ci, cell in enumerate(row):
+            if cell:
+                c.hand((cols[ci] + c.rng.randint(-10, 15), 280 + r * 120 + c.rng.randint(-8, 8)), cell,
+                       font_path(font), size=66, jitter=1.8)
+    return Sample("messy_clean_borderless", "messy", encode(to_cv(c.img)), ["Stationery order"], TABLE)
+
+
+def messy_clean_form(font="IndieFlower", seed=14) -> Sample:
+    c = Canvas(seed=seed, paper=(252, 252, 250))
+    y = 160
+    for k, v in FORM_HAND:
+        c.text((140, y + 10), f"{k}:", size=40)
+        c.draw.line([(420, y + 70), (1500, y + 70)], fill=(120, 120, 120), width=2)
+        c.hand((440 + c.rng.randint(-5, 25), y), v, font_path(font), size=60, jitter=2.0, slant=0.2)
+        y += 140
+    lines = [f"{k}: {v}" for k, v in FORM_HAND]
+    return Sample("messy_clean_form", "messy", encode(to_cv(c.img)), lines)
+
+
 def all_samples() -> list[Sample]:
     return [
         printed_invoice(),
@@ -224,12 +285,22 @@ def all_samples() -> list[Sample]:
         messy_note("bad", "ReenieBeanie", seed=8, blur=1.0, noise=8, jpeg=70),
         messy_note("worst", "DawningofaNewDay", seed=9, tilt=11, persp=0.08, blur=1.8, noise=16, contrast=0.5,
                    jpeg=40, scale=0.45),
+        # Clean images, messy writing: the realistic case for direct uploads and scanner apps.
+        messy_clean_note("ReenieBeanie", "messy_clean_note", seed=11),
+        messy_clean_note("DawningofaNewDay", "scrawl_clean_note", seed=15, jitter=2.2, slant=0.25),
+        messy_clean_note("HomemadeApple", "cursive_clean_photo", seed=16, jitter=1.8, photo_=True),
+        messy_clean_table(),
+        messy_clean_borderless(),
+        messy_clean_form(),
     ]
 
 
 if __name__ == "__main__":
     out = Path(__file__).parent / "output" / "samples"
     out.mkdir(parents=True, exist_ok=True)
+    truth = {}
     for s in all_samples():
         (out / f"{s.name}.png").write_bytes(s.image)
+        truth[s.name] = {"quality": s.quality, "lines": s.lines, "table": s.table}
         print("wrote", out / f"{s.name}.png")
+    (out / "truth.json").write_text(json.dumps(truth, indent=2))
