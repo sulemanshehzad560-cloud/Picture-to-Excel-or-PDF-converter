@@ -6,6 +6,7 @@ import "@fontsource/jetbrains-mono/600.css";
 import "./styles.css";
 
 import { exportDocument, FORMATS } from "./export/index.js";
+import { drawList, hasLayout, pageModel } from "./export/replica.js";
 import { deleteScan, listScans, saveScan } from "./history.js";
 import { initNativeChrome, isNative, nativeCamera, saveFile } from "./platform.js";
 
@@ -21,6 +22,8 @@ const state = {
   engine: "device",
   precision: "high",
   formats: new Set(["xlsx"]),
+  layout: "page", // "page": Excel/Word/PDF copy the scanned page; "data": tables and fields only
+  docMode: "page", // result view: "page" copy preview or "edit" blocks
   result: null, // {document, pages: [{page, steps, seconds, enhanced_preview, original}], seconds, engine_label}
   page: 0,
   imgMode: "original",
@@ -31,6 +34,10 @@ const PRECISION_HINT = {
   fast: "One pass. Quickest, fine for neat writing and print.",
   high: "Straightens the page, double-checks every doubtful word on an enhanced copy, and fixes misread digits.",
   max: "Also zooms into the page in tiles to catch tiny marks, and re-reads doubtful words at a second scale. Slowest.",
+};
+const LAYOUT_HINT = {
+  page: "Each scanned page comes back as one page that looks like it: same places, sizes, shading and lines. Numbers stay real numbers.",
+  data: "Just the data: each table on its own sheet, fields and text in a list, in a clean document.",
 };
 const STEP_LABEL = {
   prepare: "Finding the page, flattening",
@@ -263,7 +270,11 @@ function initControls() {
     state[name] = b.dataset.value;
     store.set(name, b.dataset.value);
     if (name === "precision") $("#precisionHint").textContent = PRECISION_HINT[b.dataset.value];
+    if (name === "layout") $("#layoutHint").textContent = LAYOUT_HINT[b.dataset.value];
   }));
+  const savedLayout = store.get("layout");
+  if (savedLayout) $(`.seg[data-name=layout] button[data-value=${savedLayout}]`)?.click();
+  $("#layoutHint").textContent = LAYOUT_HINT[state.layout];
   const saved = store.get("precision");
   if (saved) $(`.seg[data-name=precision] button[data-value=${saved}]`)?.click();
   $("#precisionHint").textContent = PRECISION_HINT[state.precision];
@@ -323,7 +334,7 @@ async function runScan() {
   $("#scanCount").textContent = files.length > 1 ? `${files.length} pages` : "";
   const t0 = performance.now();
   const ticker = setInterval(() => { $("#scanTimer").textContent = `${((performance.now() - t0) / 1000).toFixed(1)} s`; }, 100);
-  const pages = [], blocksByPage = [];
+  const pages = [], blocksByPage = [], sizes = [];
   try {
     if (state.engine === "server" && state.serverAI) {
       await runServerScan(files, pages, blocksByPage);
@@ -347,6 +358,7 @@ async function runScan() {
         const res = await recognize(f, mark);
         $$("li", list).forEach((li) => { li.className = "done"; });
         blocksByPage.push(res.blocks);
+        sizes[i] = res.size;
         pages.push({
           page: i + 1,
           steps: res.steps,
@@ -356,7 +368,7 @@ async function runScan() {
       }
     }
     $("#progressBar").style.width = "100%";
-    const document_ = { title: null, pages: blocksByPage.map((blocks, i) => ({ page_number: i + 1, blocks, notes: null })) };
+    const document_ = { title: null, pages: blocksByPage.map((blocks, i) => ({ page_number: i + 1, blocks, notes: null, ...(sizes[i] || {}) })) };
     const headed = blocksByPage.flat().find((b) => b.type === "heading");
     document_.title = headed?.text?.split("\n")[0].slice(0, 80) || null;
     state.result = {
@@ -492,12 +504,51 @@ function renderDoc() {
   const page = state.result.document.pages[state.page];
   const view = $("#docView");
   view.replaceChildren();
+  if (page.blocks.length && hasLayout(page)) {
+    const seg = el("div", { class: "seg small doc-mode" },
+      ...[["page", "Page copy"], ["edit", "Edit text"]].map(([v, label]) => el("button", {
+        class: state.docMode === v ? "on" : "",
+        onclick: () => { state.docMode = v; renderDoc(); },
+      }, label)));
+    view.append(seg);
+    if (state.docMode === "page") {
+      view.append(renderPageCopy(page), el("p", { class: "muted small" }, "How Excel, Word and PDF will look. Switch to Edit text to correct anything."));
+      return;
+    }
+  }
   if (!page.blocks.length) {
     view.append(el("p", { class: "empty" }, "No text was found on this page. Try rotating it or turning page flattening off."));
     return;
   }
   for (const b of page.blocks) view.append(renderBlock(b));
   if (page.notes) view.append(el("div", { class: "note" }, "Scanner note: " + page.notes));
+}
+
+/** The page copy, drawn from the same model the Excel / Word / PDF exporters use. */
+function renderPageCopy(page) {
+  const d = drawList(pageModel(page));
+  const pct = (v, of) => `${(v / of) * 100}%`;
+  const sheet = el("div", { class: "page-copy", style: `aspect-ratio: ${d.w} / ${d.h}` });
+  for (const f of d.fills) {
+    sheet.append(el("i", { class: "pc-fill", style: `left:${pct(f.x0, d.w)};top:${pct(f.y0, d.h)};width:${pct(f.x1 - f.x0, d.w)};height:${pct(f.y1 - f.y0, d.h)};background:#${f.fill}` }));
+  }
+  for (const r of d.rules) {
+    const vertical = r.x0 === r.x1;
+    sheet.append(el("i", { class: "pc-rule", style: vertical
+      ? `left:${pct(r.x0, d.w)};top:${pct(r.y0, d.h)};height:${pct(r.y1 - r.y0, d.h)};width:1px`
+      : `left:${pct(r.x0, d.w)};top:${pct(r.y0, d.h)};width:${pct(r.x1 - r.x0, d.w)};height:1px` }));
+  }
+  for (const t of d.texts) {
+    if (!t.text.trim()) continue;
+    const pad = t.inCell ? 0.25 * (t.fontPx || 10) : 0;
+    sheet.append(el("span", {
+      class: "pc-text" + (t.uncertain ? " unc" : "") + (t.struck ? " struck" : ""),
+      style: `left:${pct(t.x0 + pad, d.w)};top:${pct(t.y0, d.h)};width:${pct(t.x1 - t.x0 - 2 * pad, d.w)};height:${pct(t.y1 - t.y0, d.h)};`
+        + `font-size:${((t.fontPx || t.lineH * 0.72) / d.w) * 100}cqw;justify-content:${t.align === "right" ? "flex-end" : t.align === "center" ? "center" : "flex-start"};`
+        + `${t.bold ? "font-weight:700;" : ""}color:#${t.color || "000000"}`,
+    }, t.text));
+  }
+  return el("div", { class: "page-copy-wrap" }, sheet);
 }
 
 function renderBlock(b) {
@@ -572,7 +623,7 @@ function renderTable(b) {
 
 async function download(fmt, { share = true } = {}) {
   try {
-    const file = await exportDocument(state.result.document, fmt, state.result.document.title || "scan");
+    const file = await exportDocument(state.result.document, fmt, state.result.document.title || "scan", { layout: state.layout });
     const { where } = await saveFile(file, { share });
     if (!isNative) return;
     toast(`${file.filename} saved to ${where}`);

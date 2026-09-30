@@ -6,6 +6,7 @@
 // max  : + zoomed tile detection so tiny text and lone marks are found, and extra re-reads of
 //          doubtful lines at a different scale
 
+import { styleBlocks } from "./style.js";
 import { buildLayout, mainRules, rowBands, ruledGrid, splitLinesAtGrid, toItem } from "./layout.js";
 import { circled, circles, inkBlob, inkMask, isStruck, lineFreeMask, verticalRules } from "./marks.js";
 import { cropBox, fixNumericTokens } from "./ppocr.js";
@@ -522,11 +523,13 @@ export async function recognizePage(env, imageData, { precision = "high", flatte
   if (rules.length) steps.push(`${rules.length} hand-drawn column line${rules.length > 1 ? "s" : ""} found`);
   const tickInk = (x0, y0, x1, y1) => inkBlob(cv, clean, x0, y0, x1, y1);
   const blocks = buildLayout(cv, gray, lines, grid, { rules, tickInk });
+  styleBlocks(cv, rgb, blocks);
+  const size = { width: rgb.cols, height: rgb.rows };
   clean.delete();
   bin.delete();
   gray.delete();
 
   const preview = toImageData(cv, enhanced, 1400);
   enhanced.delete(); enhancedRgb.delete(); rgb.delete();
-  return { blocks, steps, preview, ms: Date.now() - t0, lines: lines.length };
+  return { blocks, size, steps, preview, ms: Date.now() - t0, lines: lines.length };
 }

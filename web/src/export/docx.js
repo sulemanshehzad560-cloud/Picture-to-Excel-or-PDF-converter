@@ -2,6 +2,8 @@ import {
   AlignmentType, BorderStyle, Document, HeadingLevel, LevelFormat, Packer, PageBreak, Paragraph, ShadingType,
   Table, TableCell, TableRow, TextRun, WidthType,
 } from "docx";
+import { pageSection } from "./docx-page.js";
+import { hasLayout } from "./replica.js";
 
 const GRID = { style: BorderStyle.SINGLE, size: 4, color: "B7BDC9" };
 const BORDERS = { top: GRID, bottom: GRID, left: GRID, right: GRID, insideHorizontal: GRID, insideVertical: GRID };
@@ -26,7 +28,16 @@ function table(rows) {
   return new Table({ rows, width: { size: 100, type: WidthType.PERCENTAGE }, borders: BORDERS });
 }
 
-export async function toDocx(doc) {
+export async function toDocx(doc, { layout = "page" } = {}) {
+  if (layout === "page" && doc.pages.length && doc.pages.every(hasLayout)) {
+    // Page copy: one Word page per scanned page, laid out as scanned.
+    const document = new Document({
+      creator: "OmniScan", title: doc.title || "Scanned document",
+      styles: { default: { document: { run: { font: "Arial", size: 20 } } } },
+      sections: doc.pages.map(pageSection),
+    });
+    return new Uint8Array(await (await Packer.toBlob(document)).arrayBuffer());
+  }
   const children = [];
   if (doc.title) children.push(new Paragraph({ heading: HeadingLevel.TITLE, children: runs(doc.title) }));
   doc.pages.forEach((page, pi) => {

@@ -41,15 +41,18 @@ export function toMarkdown(doc) {
   return out.join("\n").trim() + "\n";
 }
 
-/** -> {bytes: Uint8Array, mime, ext, filename} */
-export async function exportDocument(rawDoc, fmt, name) {
+/**
+ * -> {bytes: Uint8Array, mime, ext, filename}. `opts.layout`: "page" (default) copies each scanned page's
+ * layout in Excel, Word and PDF; "data" gives one sheet per table and a plain document flow.
+ */
+export async function exportDocument(rawDoc, fmt, name, opts = {}) {
   const doc = normalize(rawDoc);
   const stem = safeName(name || doc.title);
   let bytes, mime = FORMATS[fmt]?.mime, ext = fmt;
   switch (fmt) {
-    case "xlsx": bytes = await (await import("./xlsx.js")).toXlsx(doc); break;
-    case "docx": bytes = await (await import("./docx.js")).toDocx(doc); break;
-    case "pdf": bytes = await (await import("./pdf.js")).toPdf(doc); break;
+    case "xlsx": bytes = await (await import("./xlsx.js")).toXlsx(doc, opts); break;
+    case "docx": bytes = await (await import("./docx.js")).toDocx(doc, opts); break;
+    case "pdf": bytes = await (await import("./pdf.js")).toPdf(doc, opts); break;
     case "json": bytes = enc(JSON.stringify(doc, null, 2)); break;
     case "txt": bytes = enc(plainText(doc)); break;
     case "md": bytes = enc(toMarkdown(doc)); break;

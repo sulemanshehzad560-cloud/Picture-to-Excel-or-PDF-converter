@@ -355,3 +355,17 @@ main { max-width: 1320px; margin: 0 auto; padding: 24px clamp(16px, 4vw, 40px) c
 .thread-note { font-size: 11px; }
 .doc td.struck { text-decoration: line-through; text-decoration-thickness: 2px; color: var(--muted); }
 .doc td.struck::after { content: " ✕"; font-size: 10px; color: var(--muted); }
+
+/* Page copy preview: the scanned page redrawn as it will be exported. */
+.doc-mode { margin-bottom: 12px; }
+.doc-mode button { white-space: nowrap; }
+.page-copy-wrap { background: #e9ecf2; border-radius: 10px; padding: 12px; overflow: auto; }
+.page-copy { position: relative; width: 100%; background: #fff; container-type: inline-size; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); overflow: hidden; }
+.page-copy .pc-fill, .page-copy .pc-rule { position: absolute; display: block; }
+.page-copy .pc-rule { background: #000; }
+.page-copy .pc-text {
+  position: absolute; display: flex; align-items: center; white-space: pre; overflow: visible;
+  font-family: Arial, "Roboto", sans-serif; line-height: 1; color: #000;
+}
+.page-copy .pc-text.unc { background: rgba(255, 214, 10, 0.45); border-radius: 2px; }
+.page-copy .pc-text.struck { text-decoration: line-through; }

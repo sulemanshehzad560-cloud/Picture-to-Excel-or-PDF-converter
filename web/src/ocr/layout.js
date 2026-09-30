@@ -1,3 +1,5 @@
+import { contentSig } from "../export/common.js";
+
 // Turn recognised text lines into document structure: ruled tables, borderless tables,
 // form fields, lists, headings and paragraphs. Output matches the ExtractedDocument JSON
 // used everywhere else in OmniScan (see app/schema.py).
@@ -73,16 +75,21 @@ function splitItem(it) {
  */
 function straightened(items) {
   const plain = new Map(items.map((i) => [i, i.cy]));
+  return curlShift(items) || plain;
+}
+
+/** Map item -> straightened centre y, or null when the page shows no consistent curl. */
+function curlShift(items) {
   const wide = items.filter((i) => i.slope != null);
-  if (wide.length < 8) return plain;
+  if (wide.length < 8) return null;
   const X = wide.map((i) => [1, i.cx, i.cy, i.cx * i.cy]);
   const coef = leastSquares(X, wide.map((i) => i.slope));
-  if (!coef) return plain;
+  if (!coef) return null;
   const fit = (x, y) => coef[0] + coef[1] * x + coef[2] * y + coef[3] * x * y;
   const res = wide.map((i) => i.slope - fit(i.cx, i.cy));
   const rms = (a) => Math.sqrt(a.reduce((s, v) => s + v * v, 0) / a.length);
   const raw = rms(wide.map((i) => i.slope));
-  if (raw < 0.02 || rms(res) > 0.4 * raw) return plain;
+  if (raw < 0.02 || rms(res) > 0.4 * raw) return null;
   const xr = Math.min(...items.map((i) => i.x0));
   return new Map(items.map((i) => {
     const x = i.cx, y = i.cy;
@@ -164,8 +171,11 @@ function segments(row) {
       last.uncertain = last.uncertain || isUncertain(p.chars);
       last.scores.push(p.score);
       last.struck = last.struck && p.struck;
+      last.y0 = Math.min(last.y0, p.y0);
+      last.y1 = Math.max(last.y1, p.y1);
+      last.h = Math.max(last.h, p.h);
     } else {
-      out.push({ text: p.text, x0: p.x0, x1: p.x1, chars: [...p.chars], uncertain: isUncertain(p.chars), scores: [p.score], struck: p.struck });
+      out.push({ text: p.text, x0: p.x0, x1: p.x1, y0: p.y0, y1: p.y1, h: p.h, chars: [...p.chars], uncertain: isUncertain(p.chars), scores: [p.score], struck: p.struck });
     }
   }
   return out;
@@ -211,7 +221,7 @@ function columnize(rows) {
     k = e + 1;
   }
   const colAt = (x) => { const i = cuts.findIndex((c) => x < c); return i === -1 ? cuts.length : i; };
-  return rows.map((r) => {
+  const cellRows = rows.map((r) => {
     const cells = Array.from({ length: cuts.length + 1 }, () => ({ text: "", uncertain: false }));
     for (const s of r.segments) {
       const a = colAt(s.x0), b = colAt(s.x1);
@@ -219,9 +229,72 @@ function columnize(rows) {
       const cell = cells[idx];
       cell.text = cell.text ? `${cell.text} ${s.text}` : s.text;
       cell.uncertain = cell.uncertain || s.uncertain;
+      cell.box = unionBox([cell.box, [s.x0, s.y0, s.x1, s.y1]]);
+      cell.lineH = Math.max(cell.lineH || 0, s.h);
     }
     return cells;
   });
+  return { cells: cellRows, geo: tableGeo(cellRows, { xs: [lo, ...cuts, hi] }) };
+}
+
+/** Bounding box [x0, y0, x1, y1] of several boxes (nulls ignored). */
+function unionBox(boxes) {
+  const bs = boxes.filter(Boolean);
+  if (!bs.length) return undefined;
+  return [Math.min(...bs.map((b) => b[0])), Math.min(...bs.map((b) => b[1])), Math.max(...bs.map((b) => b[2])), Math.max(...bs.map((b) => b[3]))];
+}
+const itemBox = (it) => [it.x0, it.y0, it.x1, it.y1];
+
+/**
+ * Where a table sits on the page, for the page-copy exports: column boundaries `xs` and row
+ * boundaries `ys` (page pixels), and which lines are drawn on paper (`v`: per column boundary,
+ * including both outer edges; `h`: row lines). Boundaries come from the cells' text boxes,
+ * snapped to a drawn column line when one runs through the gap.
+ */
+function tableGeo(rows, { xs: given = null, ys: givenY = null, rules = [], ruled = false } = {}) {
+  const nC = rows[0].length, nR = rows.length;
+  const hMed = median(rows.flat().filter((c) => c.box).map((c) => c.box[3] - c.box[1])) || 20;
+  const pad = 0.3 * hMed;
+  // Where most of a column's text starts and ends: one long entry running on towards the next
+  // column must not squeeze that column away.
+  const q = (arr, f) => { const v = [...arr].sort((a, b) => a - b); return v[Math.min(v.length - 1, Math.floor(f * v.length))]; };
+  const colLo = [], colHi = [], colMin = [], colMax = [];
+  for (let c = 0; c < nC; c++) {
+    const bs = rows.map((r) => r[c].box).filter(Boolean);
+    colLo[c] = bs.length ? q(bs.map((b) => b[0]), 0.25) : null;
+    colHi[c] = bs.length ? q(bs.map((b) => b[2]), 0.75) : null;
+    colMin[c] = bs.length ? Math.min(...bs.map((b) => b[0])) : null;
+    colMax[c] = bs.length ? Math.max(...bs.map((b) => b[2])) : null;
+  }
+  let xs = given, v = new Array(nC + 1).fill(ruled);
+  if (!xs) {
+    xs = new Array(nC + 1);
+    const known = colLo.map((l, c) => l != null ? c : -1).filter((c) => c >= 0);
+    xs[0] = Math.min(...known.map((c) => colMin[c])) - pad;
+    xs[nC] = Math.max(...known.map((c) => colMax[c])) + pad;
+    for (let c = 1; c < nC; c++) {
+      const left = colHi[c - 1] ?? xs[0], right = colLo[c] ?? xs[nC];
+      const mid = left < right ? (left + right) / 2 : right - 0.1 * hMed;
+      const rule = rules.map((x) => ({ x, d: Math.abs(x - mid) })).filter((r) => r.x > Math.min(left, right) - hMed && r.x < Math.max(left, right) + hMed)
+        .sort((a, b) => a.d - b.d)[0];
+      xs[c] = rule ? rule.x : mid;
+      if (rule) v[c] = true;
+    }
+    for (let c = 1; c <= nC; c++) if (xs[c] <= xs[c - 1]) xs[c] = xs[c - 1] + 1;
+  }
+  let ys = givenY;
+  if (!ys) {
+    // Vertical extent from each text's own height about its centre (a tilted line's bounding
+    // box reaches into the rows above and below).
+    const ext = (c, sgn) => (c.box[1] + c.box[3]) / 2 + sgn * 0.6 * Math.min(c.lineH || Infinity, c.box[3] - c.box[1]);
+    const lo = rows.map((r) => Math.min(...r.filter((c) => c.box).map((c) => ext(c, -1))));
+    const hi = rows.map((r) => Math.max(...r.filter((c) => c.box).map((c) => ext(c, 1))));
+    ys = [lo[0] - 0.15 * hMed];
+    for (let r = 1; r < nR; r++) ys.push((hi[r - 1] + lo[r]) / 2);
+    ys.push(hi[nR - 1] + 0.15 * hMed);
+    for (let r = 1; r <= nR; r++) if (!(ys[r] > ys[r - 1])) ys[r] = ys[r - 1] + hMed;
+  }
+  return { xs, ys, v, h: ruled };
 }
 
 /** Detect a table drawn with ruled lines. Returns {ys, xs, bbox} or null. */
@@ -305,6 +378,10 @@ function gridTable(grid, items) {
     const lines = groupRows(cell.parts);
     cell.text = lines.map(rowText).join("\n");
     cell.uncertain = lines.some(rowUncertain);
+    if (cell.parts.length) {
+      cell.box = unionBox(cell.parts.map(itemBox));
+      cell.lineH = median(cell.parts.map((p) => p.h));
+    }
     delete cell.parts;
   }
   const confs = [...used].map((i) => i.score);
@@ -316,6 +393,7 @@ function gridTable(grid, items) {
       header_rows: 1,
       uncertain: rows.some((r) => r.some((c) => c.uncertain)),
       confidence: confs.length ? round2(Math.min(...confs)) : null,
+      geo: { xs, ys, v: xs.map(() => true), h: true },
     },
   };
 }
@@ -467,15 +545,23 @@ function ruledColumnsTable(items, rules, tickInk) {
         uncertain: c.parts.some((p) => isUncertain(p.chars)),
         struck: c.parts.length > 0 && c.parts.every((p) => p.struck),
         conf: c.parts.length ? Math.min(...c.parts.map((p) => p.conf)) : 1,
+        box: unionBox(c.parts.map(itemBox)),
+        lineH: c.parts.length ? median(c.parts.map((p) => p.h)) : undefined,
       };
     });
     if (marker) {
-      const m = { text: marker.text, uncertain: isUncertain(marker.chars), struck: false, conf: marker.conf };
-      out[0] = out[0].text ? { ...out[0], text: `${m.text} ${out[0].text}`, uncertain: out[0].uncertain || m.uncertain, struck: false } : m;
+      const m = { text: marker.text, uncertain: isUncertain(marker.chars), struck: false, conf: marker.conf, box: itemBox(marker) };
+      out[0] = out[0].text ? { ...out[0], text: `${m.text} ${out[0].text}`, uncertain: out[0].uncertain || m.uncertain, struck: false, box: unionBox([out[0].box, m.box]) } : m;
     }
     // A struck-out entry (its first column) strikes out the whole row, quantities included.
     if (out[0].struck) for (const c of out) if (c.text) c.struck = true;
-    if (tick) out.splice(tick.col + 1, 0, { text: hasTick ? "✓" : "", uncertain: hasTick && tickUnc, struck: false, conf: 1 });
+    if (tick) {
+      out.splice(tick.col + 1, 0, {
+        text: hasTick ? "✓" : "", uncertain: hasTick && tickUnc, struck: false, conf: 1,
+        box: hasTick ? [tick.x - tick.w / 2, row.cy - tick.h / 2, tick.x + tick.w / 2, row.cy + tick.h / 2] : undefined,
+        lineH: bodyH, // a tick is drawn the size of the writing on its row
+      });
+    }
     table.push(out);
   }
   repairSectionSequence(table);
@@ -488,8 +574,9 @@ function ruledColumnsTable(items, rules, tickInk) {
   if (header && tick) {
     // Name the tick column in the header row (it has no heading on paper).
     const tickIdx = table[0].slice(0, tick.col + 2).filter((_, c) => keep[c]).length - 1;
-    if (first[tickIdx] && !first[tickIdx].text) first[tickIdx] = { ...first[tickIdx], text: "✓" };
+    if (first[tickIdx] && !first[tickIdx].text) first[tickIdx] = { ...first[tickIdx], text: "✓", lineH: bodyH };
   }
+  const midY = (top + bottom) / 2;
   return {
     used: new Set(inside),
     y: top,
@@ -497,6 +584,7 @@ function ruledColumnsTable(items, rules, tickInk) {
       type: "table", rows, header_rows: header ? 1 : 0,
       uncertain: rows.some((r) => r.some((c) => c.uncertain)),
       confidence: round2(Math.min(...inside.map((i) => i.score))),
+      geo: tableGeo(rows, { rules: main.map((r) => r.xAt(midY)) }),
     },
   };
 }
@@ -578,7 +666,7 @@ const FIELD_RE = /(?:^|\s)([A-Za-z][A-Za-z0-9.#/()'&-]*(?: [A-Za-z][A-Za-z0-9.#/
  * takes the next piece of text on the row as its value, when that is near and not a label itself.
  */
 function rowFields(row) {
-  const pairs = [], rest = [];
+  const pairs = [], rest = [], restSegs = [], kvSegs = [];
   let startsWithKey = false, open = null;
   // A colon read as its own piece ("Order" + ".:") belongs to the label before it.
   const segs = [];
@@ -587,16 +675,23 @@ function rowFields(row) {
     if (last && /^[.\s]*:$/.test(seg.text)) segs[segs.length - 1] = { ...last, text: `${last.text} :`, x1: seg.x1 };
     else segs.push(seg);
   }
-  segs.forEach((seg, si) => {
+  segs.forEach((seg) => {
     const text = seg.text;
     const ms = [...text.matchAll(FIELD_RE)];
     const prefix = (ms.length ? text.slice(0, ms[0].index) : text).trim();
-    if (prefix) {
-      const near = open && seg.x0 - open.x1 < 10 * row.h;
-      if (open && near) open.pair.value = prefix;
-      else rest.push(prefix);
-    } else if (ms.length && si === 0) startsWithKey = true;
-    else if (ms.length) startsWithKey = startsWithKey || rest.length === 0 || si > 0;
+    // Where the leading text ends on the page (by share of characters), for the page copy.
+    const cut = ms.length ? seg.x0 + (seg.x1 - seg.x0) * (ms[0].index / Math.max(1, text.length)) : seg.x1;
+    const asValue = prefix && open && seg.x0 - open.x1 < 10 * row.h;
+    if (asValue) {
+      open.pair.value = prefix;
+      kvSegs.push(seg); // the value and any labels after it, as printed
+    } else {
+      if (prefix) {
+        rest.push(prefix);
+        restSegs.push({ ...seg, text: prefix, x1: cut });
+      } else if (ms.length) startsWithKey = true;
+      if (ms.length) kvSegs.push(prefix ? { ...seg, text: text.slice(ms[0].index).trim(), x0: cut } : seg);
+    }
     open = null;
     ms.forEach((m, k) => {
       const end = m.index + m[0].length;
@@ -606,11 +701,17 @@ function rowFields(row) {
       if (!value && k === ms.length - 1) open = { pair, x1: seg.x1 };
     });
   });
-  return { pairs, rest, startsWithKey };
+  return { pairs, rest, restSegs, kvSegs, startsWithKey };
 }
 
 export function buildLayout(cv, gray, lines, grid = gray ? ruledGrid(cv, gray) : null, { rules = [], tickInk = null } = {}) {
   let items = lines.filter((l) => l.text.trim()).map(toItem);
+  if (!grid && !rules.length) {
+    // A curled page is flattened once, here: every line moves to where it sits on the flat sheet
+    // (rows form cleanly, and the page copy shows a flat page), with its box its true height.
+    const v = curlShift(items);
+    if (v) items = items.map((it) => { const cy = v.get(it); return { ...it, cy, y0: cy - it.h / 2, y1: cy + it.h / 2, slope: null }; });
+  }
   const blocks = [];
 
   if (!grid && rules.length) {
@@ -636,7 +737,12 @@ export function buildLayout(cv, gray, lines, grid = gray ? ruledGrid(cv, gray) :
   const rows = groupRows(items);
   const bodyH = median(rows.map((r) => r.h)) || 20;
   let i = 0;
-  while (i < rows.length) {
+  // Each block remembers the pieces of text it was made from (for the page copy): the rows this
+  // pass of the loop consumed, unless the block named its own.
+  const tag = (start, from) => {
+    for (const b of blocks.slice(from)) if (!b.segs) b.segs = rows.slice(start, i).flatMap((r) => r.segments);
+  };
+  for (let start = 0, from = blocks.length; i < rows.length; tag(start, from), start = i, from = blocks.length) {
     const row = rows[i];
 
     // Form header of a report ("Pick list : 93.0017", "Supervisor : LFS", two fields on one line):
@@ -651,12 +757,12 @@ export function buildLayout(cv, gray, lines, grid = gray ? ruledGrid(cv, gray) :
         break;
       }
       const chunk = rows.slice(i, j);
-      const parsed = chunk.map((r) => fieldRow(r) || { pairs: [], rest: [rowText(r)] });
+      const parsed = chunk.map((r) => fieldRow(r) || { pairs: [], rest: [rowText(r)], restSegs: r.segments, kvSegs: [] });
       const pairs = parsed.flatMap((f) => f.pairs);
       if (nFields >= 2 && pairs.length >= 2) {
-        blocks.push({ y: row.y0, block: { type: "key_value", pairs, uncertain: pairs.some((p) => p.uncertain) } });
+        blocks.push({ y: row.y0, segs: parsed.flatMap((f) => f.kvSegs), block: { type: "key_value", pairs, uncertain: pairs.some((p) => p.uncertain) } });
         const rest = parsed.flatMap((f) => f.rest);
-        if (rest.length) blocks.push({ y: row.y0 + 0.5, block: { type: "paragraph", text: rest.join("\n"), uncertain: false } });
+        if (rest.length) blocks.push({ y: row.y0 + 0.5, segs: parsed.flatMap((f) => f.restSegs), block: { type: "paragraph", text: rest.join("\n"), uncertain: false } });
         i = j;
         continue;
       }
@@ -678,9 +784,9 @@ export function buildLayout(cv, gray, lines, grid = gray ? ruledGrid(cv, gray) :
           uncertain: chunk.some(rowUncertain),
         } });
       } else {
-        const grid2 = columnize(chunk);
-        blocks.push({ y: row.y0, block: {
-          type: "table", rows: grid2, header_rows: 1,
+        const { cells: grid2, geo } = columnize(chunk);
+        blocks.push({ y: row.y0, segs: [], block: {
+          type: "table", rows: grid2, header_rows: 1, geo,
           uncertain: chunk.some(rowUncertain), confidence: round2(Math.min(...chunk.map(rowConf))),
         } });
       }
@@ -748,6 +854,14 @@ export function buildLayout(cv, gray, lines, grid = gray ? ruledGrid(cv, gray) :
       type: "paragraph", text: para.map(rowText).join("\n"),
       uncertain: para.some(rowUncertain), confidence: round2(Math.min(...para.map(rowConf))),
     } });
+  }
+  for (const b of blocks) {
+    if (b.segs?.length) {
+      b.block.geo = {
+        lines: b.segs.map((sg) => ({ box: [sg.x0, sg.y0, sg.x1, sg.y1], h: sg.h, text: sg.text, uncertain: !!sg.uncertain, struck: !!sg.struck })),
+        sig: contentSig(b.block),
+      };
+    }
   }
   return harmonizeCodes(blocks.sort((a, b) => a.y - b.y).map((b) => b.block));
 }

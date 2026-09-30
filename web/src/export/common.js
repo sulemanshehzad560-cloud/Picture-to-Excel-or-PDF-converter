@@ -61,3 +61,8 @@ export function asNumber(text) {
 export function safeName(name, fallback = "scan") {
   return (String(name || "").replace(/[^\w\- ]+/g, "").trim().slice(0, 80)) || fallback;
 }
+
+/** What a block says (not how it looks): tells the page copy whether the user edited it. */
+export function contentSig(b) {
+  return JSON.stringify([b.type, b.text ?? null, b.items ?? null, (b.pairs || []).map((p) => [p.key, p.value]), b.checked ?? null]);
+}

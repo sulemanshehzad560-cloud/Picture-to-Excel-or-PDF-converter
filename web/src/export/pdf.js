@@ -1,5 +1,7 @@
 import pdfMake from "pdfmake/build/pdfmake.js";
 import vfs from "pdfmake/build/vfs_fonts.js";
+import { pagesDefinition } from "./pdf-page.js";
+import { hasLayout } from "./replica.js";
 
 pdfMake.addVirtualFileSystem(vfs);
 
@@ -9,7 +11,11 @@ const txt = (text, uncertain, extra = {}) => ({ text: String(text ?? ""), ...(un
 // Roboto (bundled, offline) covers Latin, Greek and Cyrillic; ballot-box glyphs are not in it.
 const box = (checked) => (checked ? "[x]" : "[ ]");
 
-export async function toPdf(doc) {
+export async function toPdf(doc, { layout = "page" } = {}) {
+  if (layout === "page" && doc.pages.length && doc.pages.every(hasLayout)) {
+    // Page copy: every scanned page as it looked, one PDF page each.
+    return new Uint8Array(await pdfMake.createPdf(pagesDefinition(doc)).getBuffer());
+  }
   const content = [];
   if (doc.title) content.push({ text: doc.title, style: "title" });
   doc.pages.forEach((page, pi) => {

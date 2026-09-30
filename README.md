@@ -3,6 +3,13 @@
 Photograph or upload any page (neat or messy handwriting, forms, ledgers, receipts, tables) and
 get it back as **Excel, Word, PDF, CSV, Markdown, text or JSON**. You choose the format.
 
+- **A copy of the page, not a pile of data.** By default Excel, Word and PDF reproduce each scanned
+  page on one page: every line where it was printed or written, the same text sizes, bold, text
+  colour, shaded header rows and banded rows, and the table ruling. In Excel the columns and rows
+  are cut at the page's own edges and the sheet prints on exactly one page. Numbers stay real
+  numbers. In Word the tables are real, editable tables. Pick **Data only** instead for one sheet
+  per table and a plain document.
+
 - **Runs on your phone, offline.** Recognition uses PaddleOCR's PP-OCRv6 neural models on-device
   (ONNX Runtime WebAssembly). No API key, no account, no internet, and nothing is uploaded.
 - **Reads messy handwriting.** Neural line recognition plus a second, contrast-enhanced read of
@@ -83,7 +90,8 @@ with an optional Python API. That API offers an extra Claude "AI vision" engine 
 ```
 photo / PDF ─► flatten page, measure noise ─► detect text lines (PP-OCRv6 DB) ─► deskew (ruled lines or text lines)
             ─► recognise lines (PP-OCRv6 CTC) ─► re-read doubtful lines on an enhanced copy, keep the more confident read
-            ─► digit-aware fixes ─► ruled-grid + borderless table / form / list / heading layout ─► edit ─► export
+            ─► digit-aware fixes ─► ruled-grid + borderless table / form / list / heading layout
+            ─► positions, sizes and shading of everything ─► edit ─► export (page copy or data)
 ```
 
 | Path | What it does |
@@ -94,6 +102,8 @@ photo / PDF ─► flatten page, measure noise ─► detect text lines (PP-OCRv
 | `web/src/ocr/marks.js` | Hand-drawn column lines, circled numbers, strike-throughs, pen-mark detection |
 | `web/src/ocr/preprocess.js` | Page flattening, noise-matched denoise, shadow removal, contrast |
 | `web/src/export/` | Excel, Word, PDF, CSV, Markdown, text, JSON: all on-device |
+| `web/src/export/replica.js` | Page copy: where everything sits on the page; `xlsx-page.js`, `docx-page.js`, `pdf-page.js` draw it |
+| `web/src/ocr/style.js` | Look of the page: text colour and weight, shaded cells and banded rows |
 | `web/src/main.js` | The app UI; `platform.js` handles the Android camera and saving/sharing files |
 | `android/` | Capacitor Android project (target SDK 36, no INTERNET permission) |
 | `scripts/fetch-models.mjs` | Downloads the models from PyPI and checks their SHA-256 hashes |

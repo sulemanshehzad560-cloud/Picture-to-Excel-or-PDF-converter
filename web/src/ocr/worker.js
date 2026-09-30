@@ -85,7 +85,7 @@ self.onmessage = async ({ data: msg }) => {
         onStep: (step) => self.postMessage({ type: "progress", id: msg.id, step }),
       });
       const preview = new ImageData(res.preview.data, res.preview.width, res.preview.height);
-      self.postMessage({ type: "result", id: msg.id, blocks: res.blocks, steps: res.steps, ms: res.ms, preview }, [preview.data.buffer]);
+      self.postMessage({ type: "result", id: msg.id, blocks: res.blocks, size: res.size, steps: res.steps, ms: res.ms, preview }, [preview.data.buffer]);
     }
   } catch (err) {
     self.postMessage({ type: "error", id: msg.id, message: err?.message || String(err) });

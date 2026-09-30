@@ -1,5 +1,7 @@
 import ExcelJS from "exceljs";
 import { asNumber, blockText, tables } from "./common.js";
+import { hasLayout } from "./replica.js";
+import { addPageSheet } from "./xlsx-page.js";
 
 const HEADER_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F2A44" } };
 const UNCERTAIN_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF2A8" } };
@@ -57,10 +59,15 @@ function autofit(ws) {
   });
 }
 
-export async function toXlsx(doc) {
+export async function toXlsx(doc, { layout = "page" } = {}) {
   const wb = new ExcelJS.Workbook();
   wb.creator = "OmniScan";
   const used = new Set();
+  if (layout === "page" && doc.pages.length && doc.pages.every(hasLayout)) {
+    // Page copy: each scanned page becomes one sheet that looks like it and prints on one page.
+    for (const page of doc.pages) addPageSheet(wb, page, sheetName(`Page ${page.page_number}`, used));
+    return new Uint8Array(await wb.xlsx.writeBuffer());
+  }
   const tbls = tables(doc);
 
   for (const { page, n, block } of tbls) {

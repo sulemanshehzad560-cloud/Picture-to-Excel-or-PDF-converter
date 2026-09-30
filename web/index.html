@@ -85,11 +85,20 @@
           </div>
 
           <div class="field">
+            <label>Excel, Word and PDF layout</label>
+            <div class="seg" data-name="layout">
+              <button data-value="page" class="on">Copy of the page</button>
+              <button data-value="data">Data only</button>
+            </div>
+            <p class="muted small" id="layoutHint"></p>
+          </div>
+
+          <div class="field">
             <label>Output formats <span class="muted small">(pick one or more)</span></label>
             <div class="formats" id="formats">
-              <button class="fmt on" data-fmt="xlsx"><span class="fmt-ic x">XLS</span><b>Excel</b><small>Tables → sheets</small></button>
-              <button class="fmt" data-fmt="docx"><span class="fmt-ic w">DOC</span><b>Word</b><small>Editable layout</small></button>
-              <button class="fmt" data-fmt="pdf"><span class="fmt-ic p">PDF</span><b>PDF</b><small>Clean document</small></button>
+              <button class="fmt on" data-fmt="xlsx"><span class="fmt-ic x">XLS</span><b>Excel</b><small>Page → one sheet</small></button>
+              <button class="fmt" data-fmt="docx"><span class="fmt-ic w">DOC</span><b>Word</b><small>Same layout, editable</small></button>
+              <button class="fmt" data-fmt="pdf"><span class="fmt-ic p">PDF</span><b>PDF</b><small>Page as scanned</small></button>
               <button class="fmt" data-fmt="csv"><span class="fmt-ic c">CSV</span><b>CSV</b><small>Raw table data</small></button>
               <button class="fmt" data-fmt="md"><span class="fmt-ic m">MD</span><b>Markdown</b><small>For notes apps</small></button>
               <button class="fmt" data-fmt="txt"><span class="fmt-ic t">TXT</span><b>Text</b><small>Plain text</small></button>
