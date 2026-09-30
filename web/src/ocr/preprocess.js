@@ -91,6 +91,81 @@ export function flattenPage(cv, rgb) {
   }
 }
 
+/**
+ * Fallback when the sheet's four corners are not all in the photo: find the paper as the largest
+ * bright region, blank everything around it (keyboard, desk, other papers) with the paper colour
+ * and crop to it, so nothing outside the page is read or taken for a column line.
+ */
+export function isolatePaper(cv, rgb) {
+  const scale = 600 / Math.max(rgb.rows, rgb.cols);
+  const small = new cv.Mat(), gray = new cv.Mat(), bin = new cv.Mat();
+  const labels = new cv.Mat(), stats = new cv.Mat(), cents = new cv.Mat();
+  const contours = new cv.MatVector(), hier = new cv.Mat();
+  try {
+    cv.resize(rgb, small, new cv.Size(0, 0), scale, scale, cv.INTER_AREA);
+    cv.cvtColor(small, gray, cv.COLOR_RGB2GRAY);
+    cv.GaussianBlur(gray, gray, new cv.Size(7, 7), 0);
+    const t = cv.threshold(gray, bin, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+    // Print on the paper must not split it; small bright bits (keys, reflections) must not join it.
+    const k = cv.Mat.ones(9, 9, cv.CV_8U), ko = cv.Mat.ones(25, 25, cv.CV_8U);
+    cv.morphologyEx(bin, bin, cv.MORPH_CLOSE, k);
+    cv.morphologyEx(bin, bin, cv.MORPH_OPEN, ko); // also cuts thin bridges to a neighbouring sheet
+    k.delete(); ko.delete();
+    const n = cv.connectedComponentsWithStats(bin, labels, stats, cents, 8, cv.CV_32S);
+    let best = 0, bestA = 0;
+    for (let i = 1; i < n; i++) {
+      const a = stats.intAt(i, cv.CC_STAT_AREA);
+      if (a > bestA) { bestA = a; best = i; }
+    }
+    const total = small.rows * small.cols;
+    if (!best || bestA < 0.25 * total || bestA > 0.93 * total) return null;
+    // The surroundings must be clearly darker than the paper, or this is just a page with a margin.
+    let inS = 0, inN = 0, outS = 0, outN = 0;
+    for (let i = 0; i < total; i++) {
+      if (labels.data32S[i] === best) { inS += gray.data[i]; inN++; } else { outS += gray.data[i]; outN++; }
+    }
+    const inMean = inS / inN, outMean = outS / Math.max(1, outN);
+    if (inMean - outMean < 50 || t > inMean) return null;
+    for (let i = 0; i < total; i++) bin.data[i] = labels.data32S[i] === best ? 255 : 0;
+    cv.findContours(bin, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+    if (!contours.size()) return null;
+    // The paper's outline with the print inside filled in. (Not the convex hull: that would bridge
+    // across the keyboard to a second sheet lying next to this one.)
+    let big = 0, bigA = 0;
+    for (let i = 0; i < contours.size(); i++) {
+      const ci = contours.get(i);
+      const a = cv.contourArea(ci);
+      ci.delete();
+      if (a > bigA) { bigA = a; big = i; }
+    }
+    const c = contours.get(big);
+    const pts = Array.from(c.data32S, (v) => v / scale);
+    c.delete();
+    // Full-size mask of the paper, shrunk a little so its edge is not kept as a line.
+    const mask = cv.Mat.zeros(rgb.rows, rgb.cols, cv.CV_8U);
+    const poly = cv.matFromArray(pts.length / 2, 1, cv.CV_32SC2, pts.map(Math.round));
+    const polys = new cv.MatVector();
+    polys.push_back(poly);
+    cv.fillPoly(mask, polys, new cv.Scalar(255));
+    polys.delete(); poly.delete();
+    const e = Math.max(3, Math.round(Math.max(rgb.rows, rgb.cols) / 150));
+    const ek = cv.Mat.ones(2 * e + 1, 2 * e + 1, cv.CV_8U);
+    cv.erode(mask, mask, ek);
+    ek.delete();
+    const paperColor = cv.mean(rgb, mask);
+    const out = new cv.Mat(rgb.rows, rgb.cols, rgb.type(), new cv.Scalar(paperColor[0], paperColor[1], paperColor[2], 255));
+    rgb.copyTo(out, mask);
+    const r = cv.boundingRect(mask);
+    mask.delete();
+    const cropped = out.roi(r).clone();
+    out.delete();
+    return cropped;
+  } finally {
+    small.delete(); gray.delete(); bin.delete(); labels.delete(); stats.delete(); cents.delete();
+    contours.delete(); hier.delete();
+  }
+}
+
 /** Rotate by `angle` degrees counter-clockwise, expanding the canvas, white/replicated border. */
 export function rotate(cv, mat, angle) {
   const center = new cv.Point(mat.cols / 2, mat.rows / 2);
@@ -185,6 +260,13 @@ export function prepare(cv, imageData, { flatten = true } = {}) {
       rgb.delete();
       rgb = flat;
       steps.push("page flattened");
+    } else {
+      const paper = isolatePaper(cv, rgb);
+      if (paper) {
+        rgb.delete();
+        rgb = paper;
+        steps.push("background around the page removed");
+      }
     }
   }
   // Measure noise at native resolution: upscaling first would smooth the grain and hide it.

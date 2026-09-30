@@ -6,7 +6,7 @@
 // max  : + zoomed tile detection so tiny text and lone marks are found, and extra re-reads of
 //          doubtful lines at a different scale
 
-import { buildLayout, mainRules, rowBands, ruledGrid, toItem } from "./layout.js";
+import { buildLayout, mainRules, rowBands, ruledGrid, splitLinesAtGrid, toItem } from "./layout.js";
 import { circled, circles, inkBlob, inkMask, isStruck, lineFreeMask, verticalRules } from "./marks.js";
 import { cropBox, fixNumericTokens } from "./ppocr.js";
 import { enhance, prepare, rotate, rotate90, toImageData } from "./preprocess.js";
@@ -327,8 +327,9 @@ export async function recognizePage(env, imageData, { precision = "high", flatte
   const detOpts = { maxSide: DET_SIDE[precision] || DET_SIDE.high, boxThresh: 0.4 };
   let boxes = await ocr.detect(cv, rgb, detOpts);
 
-  if (precision !== "fast" && boxes.length) {
-    // Page turned sideways: most boxes taller than wide.
+  if (boxes.length) {
+    // Page orientation, settled on the page itself (not per line) so that rows and columns come
+    // out in reading order. 1) Sideways: most text boxes taller than wide.
     const tall = boxes.filter((b) => { const d = boxDims(b.pts); return d.h > 1.5 * d.w; }).length;
     if (tall > boxes.length * 0.6 && boxes.length >= 3) {
       const r = rotate90(cv, rgb, 1);
@@ -336,14 +337,29 @@ export async function recognizePage(env, imageData, { precision = "high", flatte
       boxes = await ocr.detect(cv, rgb, detOpts);
       steps.push("rotated 90°");
     }
-    // Deskew. Ruled lines (tables, forms) are the most reliable reference; otherwise use the
-    // dominant angle of long text lines, but only when they agree, since handwritten words wobble.
+    // 2) Upside down: ask the orientation classifier about the longest lines; if most of them
+    //    are upside down, turn the whole page by 180° and detect again.
+    const sample = [...boxes].sort((a, b) => boxDims(b.pts).w - boxDims(a.pts).w).slice(0, 24)
+      .filter((b) => { const d = boxDims(b.pts); return d.w > 2 * d.h; });
+    if (sample.length >= 3) {
+      const mats = sample.map((b) => cropBox(cv, rgb, b.pts).mat);
+      const flips = await ocr.upsideDown(cv, mats);
+      mats.forEach((m) => m.delete());
+      if (flips.filter(Boolean).length > 0.6 * sample.length) {
+        const r = rotate90(cv, rgb, 2);
+        rgb.delete(); rgb = r;
+        boxes = await ocr.detect(cv, rgb, detOpts);
+        steps.push("page was upside down: turned 180°");
+      }
+    }
+    // 3) Deskew. Ruled lines (tables, forms) are the most reliable reference; otherwise use the
+    //    dominant angle of long text lines, but only when they agree (handwritten words wobble).
     const ruled = ruledLineAngle(cv, rgb);
     const angles = boxes.filter((b) => { const d = boxDims(b.pts); return d.w > 3 * d.h; }).map((b) => lineAngle(b.pts));
     const med = median(angles);
     const spread = median(angles.map((a) => Math.abs(a - med)));
     const angle = ruled ?? (angles.length >= 3 && spread < 1.5 ? med : 0);
-    if (Math.abs(angle) > 0.8 && Math.abs(angle) < 30) {
+    if (Math.abs(angle) > 0.5 && Math.abs(angle) < 30) {
       const r = rotate(cv, rgb, angle);
       rgb.delete(); rgb = r;
       boxes = await ocr.detect(cv, rgb, detOpts);
@@ -377,16 +393,7 @@ export async function recognizePage(env, imageData, { precision = "high", flatte
 
   onStep("recognize");
   const crops = boxes.map((b) => cropBox(cv, rgb, b.pts));
-  let mats = crops.map((c) => c.mat);
-  if (precision !== "fast" && mats.length) {
-    // Only trust the orientation classifier when most of the page agrees (single-line flags are
-    // usually false alarms on short handwritten words).
-    const flips = await ocr.upsideDown(cv, mats);
-    if (flips.filter(Boolean).length > mats.length * 0.6 && mats.length >= 3) {
-      mats = mats.map((m) => { const r = rotate90(cv, m, 2); m.delete(); return r; });
-      steps.push("page was upside down: corrected");
-    }
-  }
+  const mats = crops.map((c) => c.mat);
   let results = await ocr.recognize(cv, mats);
 
   if (precision !== "fast") {
@@ -438,8 +445,16 @@ export async function recognizePage(env, imageData, { precision = "high", flatte
   const gray = new cv.Mat();
   cv.cvtColor(rgb, gray, cv.COLOR_RGB2GRAY);
   const bin = inkMask(cv, gray);
-  const grid = ruledGrid(cv, gray);
+  let grid = ruledGrid(cv, gray);
   if (grid) {
+    // A printed table has text in most of its rows. Ruled notebook paper under a hand-drawn
+    // ledger also forms a grid, but one whose rows are mostly empty: use the column lines instead.
+    const cys = lines.map((l) => { const ys = l.pts.map((p) => p[1]); return (Math.min(...ys) + Math.max(...ys)) / 2; });
+    const filled = grid.ys.slice(1).filter((y, i) => cys.some((c) => c >= grid.ys[i] && c < y)).length;
+    if (filled < 0.7 * (grid.ys.length - 1)) grid = null;
+  }
+  if (grid) {
+    lines = splitLinesAtGrid(grid, lines);
     // Table cells the detector left empty but that contain ink (a lone "1", a dot, a tick):
     // read the ink directly so no mark in a table is lost.
     const extra = await readInkInEmptyCells(cv, ocr, rgb, gray, grid, lines);

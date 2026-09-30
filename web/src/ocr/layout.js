@@ -24,7 +24,17 @@ export function toItem(line) {
   return {
     text: line.text, score: line.score, x0, x1, y0, y1, h: Math.max(4, h), cy: (y0 + y1) / 2, cx: (x0 + x1) / 2, chars,
     conf: line.minProb ?? 1, struck: !!line.struck, marker: !!line.marker, tick: !!line.tick,
+    slope: lineSlope(line.pts),
   };
+}
+
+/** Tilt (dy/dx) of a long text line, or null when the box is too short to tell. */
+function lineSlope(pts) {
+  const dx = pts[1][0] - pts[0][0], dy = pts[1][1] - pts[0][1];
+  const h = Math.hypot(pts[3][0] - pts[0][0], pts[3][1] - pts[0][1]);
+  if (dx <= 0 || Math.hypot(dx, dy) < 2.5 * h) return null;
+  const s = dy / dx;
+  return Math.abs(s) < 0.2 ? s : null;
 }
 
 const isUncertain = (chars) => chars.some((c) => c.p < UNCERTAIN_PROB);
@@ -54,14 +64,69 @@ function splitItem(it) {
  * centre is within half a line height; rows never grow, so tightly written lines (handwritten
  * lists are often packed closer than one line height) stay separate.
  */
+/**
+ * Row positions with page curl taken out. On a photographed page that bends, printed lines tilt
+ * differently across the page (steeper at one edge), so a row's right end sits higher or lower than
+ * its left end by a full line. The tilt of the long text lines is fitted as a smooth field
+ * s(x, y) = a + b·x + c·y + d·x·y and each item's y is moved along it to the left margin. Used only
+ * when the lines agree on such a field; handwriting wobbles at random and keeps its plain y.
+ */
+function straightened(items) {
+  const plain = new Map(items.map((i) => [i, i.cy]));
+  const wide = items.filter((i) => i.slope != null);
+  if (wide.length < 8) return plain;
+  const X = wide.map((i) => [1, i.cx, i.cy, i.cx * i.cy]);
+  const coef = leastSquares(X, wide.map((i) => i.slope));
+  if (!coef) return plain;
+  const fit = (x, y) => coef[0] + coef[1] * x + coef[2] * y + coef[3] * x * y;
+  const res = wide.map((i) => i.slope - fit(i.cx, i.cy));
+  const rms = (a) => Math.sqrt(a.reduce((s, v) => s + v * v, 0) / a.length);
+  const raw = rms(wide.map((i) => i.slope));
+  if (raw < 0.02 || rms(res) > 0.4 * raw) return plain;
+  const xr = Math.min(...items.map((i) => i.x0));
+  return new Map(items.map((i) => {
+    const x = i.cx, y = i.cy;
+    const shift = (coef[0] + coef[2] * y) * (x - xr) + (coef[1] + coef[3] * y) * (x * x - xr * xr) / 2;
+    return [i, y - shift];
+  }));
+}
+
+/** Solve min |X·c - y|² by the normal equations (small, well-scaled systems only). */
+function leastSquares(X, y) {
+  const n = X[0].length;
+  // Scale columns so x·y products do not swamp the constant term.
+  const sc = Array.from({ length: n }, (_, j) => Math.max(1e-9, Math.max(...X.map((r) => Math.abs(r[j])))));
+  const A = Array.from({ length: n }, () => new Array(n + 1).fill(0));
+  X.forEach((r, k) => {
+    const rs = r.map((v, j) => v / sc[j]);
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) A[i][j] += rs[i] * rs[j];
+      A[i][n] += rs[i] * y[k];
+    }
+  });
+  for (let i = 0; i < n; i++) {
+    let p = i;
+    for (let r = i + 1; r < n; r++) if (Math.abs(A[r][i]) > Math.abs(A[p][i])) p = r;
+    [A[i], A[p]] = [A[p], A[i]];
+    if (Math.abs(A[i][i]) < 1e-12) return null;
+    for (let r = 0; r < n; r++) {
+      if (r === i) continue;
+      const f = A[r][i] / A[i][i];
+      for (let c = i; c <= n; c++) A[r][c] -= f * A[i][c];
+    }
+  }
+  return A.map((r, i) => r[n] / r[i] / sc[i]);
+}
+
 function groupRows(items) {
   const bodyH = median(items.map((i) => i.y1 - i.y0)) || 20;
   const rows = [];
-  for (const it of [...items].sort((a, b) => a.cy - b.cy)) {
+  const v = straightened(items);
+  for (const it of [...items].sort((a, b) => v.get(a) - v.get(b))) {
     const itH = it.y1 - it.y0;
     let best = null, bestD = Infinity;
     for (const r of rows) {
-      const d = Math.abs(r.cy - it.cy);
+      const d = Math.abs(r.v - v.get(it));
       if (d < bestD) { bestD = d; best = r; }
     }
     // Section markers (②) sit on their own line: they only join a row they clearly share.
@@ -70,9 +135,10 @@ function groupRows(items) {
     if (best && bestD <= lim && !best.items.some((o) => Math.min(o.x1, it.x1) - Math.max(o.x0, it.x0) > 0.5 * Math.min(o.x1 - o.x0, it.x1 - it.x0))) {
       best.items.push(it);
       best.cy = best.items.reduce((s, o) => s + o.cy, 0) / best.items.length;
+      best.v = best.items.reduce((s, o) => s + v.get(o), 0) / best.items.length;
       best.hMed = median(best.items.map((o) => o.y1 - o.y0));
     } else {
-      rows.push({ items: [it], cy: it.cy, hMed: itH });
+      rows.push({ items: [it], cy: it.cy, v: v.get(it), hMed: itH });
     }
   }
   for (const r of rows) {
@@ -82,7 +148,7 @@ function groupRows(items) {
     r.h = median(r.items.map((i) => i.h));
     r.segments = segments(r);
   }
-  return rows.sort((a, b) => a.cy - b.cy);
+  return rows.sort((a, b) => a.v - b.v);
 }
 
 /** Segments = column-separated pieces of a row. Nearby items (same phrase) are merged. */
@@ -109,22 +175,47 @@ const rowText = (r) => r.segments.map((s) => s.text).join(" ");
 const rowUncertain = (r) => r.segments.some((s) => s.uncertain);
 const rowConf = (r) => Math.min(...r.segments.flatMap((s) => s.scores));
 
-/** Column boundaries from the union of segment spans across rows. */
+/**
+ * Column boundaries: x ranges that (almost) no row's text crosses. In a longer table up to half the rows may
+ * run across a column gap (an indented description line under each record) without merging the
+ * columns; such a segment goes to the column it starts in.
+ */
 function columnize(rows) {
-  const spans = rows.flatMap((r) => r.segments.map((s) => [s.x0, s.x1])).sort((a, b) => a[0] - b[0]);
-  const merged = [];
-  for (const [a, b] of spans) {
-    const last = merged[merged.length - 1];
-    if (last && a <= last[1]) last[1] = Math.max(last[1], b);
-    else merged.push([a, b]);
+  const spans = rows.flatMap((r) => r.segments.map((s) => [s.x0, s.x1]));
+  const lo = Math.min(...spans.map((s) => s[0])), hi = Math.max(...spans.map((s) => s[1]));
+  const bin = Math.max(2, (median(rows.map((r) => r.h)) || 20) / 4);
+  const n = Math.ceil((hi - lo) / bin) + 1;
+  const cover = new Array(n).fill(0);
+  for (const r of rows) {
+    const hit = new Uint8Array(n);
+    for (const s of r.segments) for (let k = Math.floor((s.x0 - lo) / bin); k <= Math.floor((s.x1 - lo) / bin); k++) hit[k] = 1;
+    hit.forEach((v, k) => { cover[k] += v; });
   }
-  const cuts = merged.slice(1).map((m, i) => (merged[i][1] + m[0]) / 2);
+  const allowed = rows.length >= 4 ? Math.floor(rows.length / 2) : 0;
+  const cuts = [];
+  let k = 0;
+  while (k < n) {
+    if (cover[k] > allowed) { k++; continue; }
+    let e = k;
+    while (e + 1 < n && cover[e + 1] <= allowed) e++;
+    // Within a low stretch, each run at the stretch's minimum is its own gap (two empty gaps
+    // with one sparse column between them stay two cuts); never at the table's outer edge.
+    const lowest = Math.min(...cover.slice(k, e + 1));
+    for (let a = k; a <= e; a++) {
+      if (cover[a] !== lowest) continue;
+      let b = a;
+      while (b + 1 <= e && cover[b + 1] === lowest) b++;
+      if (a > 0 && b < n - 1) cuts.push(lo + ((a + b + 1) / 2) * bin);
+      a = b;
+    }
+    k = e + 1;
+  }
+  const colAt = (x) => { const i = cuts.findIndex((c) => x < c); return i === -1 ? cuts.length : i; };
   return rows.map((r) => {
     const cells = Array.from({ length: cuts.length + 1 }, () => ({ text: "", uncertain: false }));
     for (const s of r.segments) {
-      const cx = (s.x0 + s.x1) / 2;
-      let idx = cuts.findIndex((c) => cx < c);
-      if (idx === -1) idx = cuts.length;
+      const a = colAt(s.x0), b = colAt(s.x1);
+      const idx = a === b ? a : colAt(s.x0 + 1);
       const cell = cells[idx];
       cell.text = cell.text ? `${cell.text} ${s.text}` : s.text;
       cell.uncertain = cell.uncertain || s.uncertain;
@@ -147,6 +238,13 @@ export function ruledGrid(cv, gray) {
     cv.morphologyEx(bin, vert, cv.MORPH_OPEN, vk);
     hk.delete(); vk.delete();
     cv.bitwise_or(horiz, vert, both);
+    // A photographed table is never perfectly square: a rule that drifts a few pixels across the
+    // page must still count as one line, so thicken the rules across their direction first.
+    const tv = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(9, 1));
+    const th = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, 9));
+    cv.dilate(vert, vert, tv);
+    cv.dilate(horiz, horiz, th);
+    tv.delete(); th.delete();
     const k5 = cv.Mat.ones(5, 5, cv.CV_8U);
     cv.dilate(both, both, k5);
     k5.delete();
@@ -471,6 +569,46 @@ export function harmonizeCodes(blocks) {
  * lines: [{pts, text, score, chars:[{c,p,x}], vertical}] in `gray` coordinates.
  * Returns an array of blocks in reading order.
  */
+// A field label: one to four words ending in a colon ("Work pack. :", "Tour . . . :"), or in dot
+// leaders at the end of a piece of text ("Note . . .").
+const FIELD_RE = /(?:^|\s)([A-Za-z][A-Za-z0-9.#/()'&-]*(?: [A-Za-z][A-Za-z0-9.#/()'&-]*){0,3}?)\s*(?:[.\s]*:(?!\d)|\s*\.{2,}\s*$)/g;
+
+/**
+ * Read a row as form fields. Returns {pairs, rest, startsWithKey}: a label with nothing after it
+ * takes the next piece of text on the row as its value, when that is near and not a label itself.
+ */
+function rowFields(row) {
+  const pairs = [], rest = [];
+  let startsWithKey = false, open = null;
+  // A colon read as its own piece ("Order" + ".:") belongs to the label before it.
+  const segs = [];
+  for (const seg of row.segments) {
+    const last = segs[segs.length - 1];
+    if (last && /^[.\s]*:$/.test(seg.text)) segs[segs.length - 1] = { ...last, text: `${last.text} :`, x1: seg.x1 };
+    else segs.push(seg);
+  }
+  segs.forEach((seg, si) => {
+    const text = seg.text;
+    const ms = [...text.matchAll(FIELD_RE)];
+    const prefix = (ms.length ? text.slice(0, ms[0].index) : text).trim();
+    if (prefix) {
+      const near = open && seg.x0 - open.x1 < 10 * row.h;
+      if (open && near) open.pair.value = prefix;
+      else rest.push(prefix);
+    } else if (ms.length && si === 0) startsWithKey = true;
+    else if (ms.length) startsWithKey = startsWithKey || rest.length === 0 || si > 0;
+    open = null;
+    ms.forEach((m, k) => {
+      const end = m.index + m[0].length;
+      const value = text.slice(end, k + 1 < ms.length ? ms[k + 1].index : text.length).trim();
+      const pair = { key: m[1].trim().replace(/\s*\.{2,}$/, ""), value, uncertain: seg.uncertain };
+      pairs.push(pair);
+      if (!value && k === ms.length - 1) open = { pair, x1: seg.x1 };
+    });
+  });
+  return { pairs, rest, startsWithKey };
+}
+
 export function buildLayout(cv, gray, lines, grid = gray ? ruledGrid(cv, gray) : null, { rules = [], tickInk = null } = {}) {
   let items = lines.filter((l) => l.text.trim()).map(toItem);
   const blocks = [];
@@ -500,6 +638,29 @@ export function buildLayout(cv, gray, lines, grid = gray ? ruledGrid(cv, gray) :
   let i = 0;
   while (i < rows.length) {
     const row = rows[i];
+
+    // Form header of a report ("Pick list : 93.0017", "Supervisor : LFS", two fields on one line):
+    // two or more rows of labelled fields, possibly with a stray line of other text between them
+    // (a block printed further right). Other text in those rows is kept as a paragraph.
+    const fieldRow = (r) => { const f = rowFields(r); return f.pairs.length && f.startsWithKey ? f : null; };
+    if (fieldRow(row)) {
+      let j = i + 1, nFields = 1;
+      while (j < rows.length && rows[j].y0 - rows[j - 1].y1 < 3 * bodyH) {
+        if (fieldRow(rows[j])) { nFields++; j++; continue; }
+        if (rows[j].segments.length === 1 && j + 1 < rows.length && fieldRow(rows[j + 1])) { j++; continue; }
+        break;
+      }
+      const chunk = rows.slice(i, j);
+      const parsed = chunk.map((r) => fieldRow(r) || { pairs: [], rest: [rowText(r)] });
+      const pairs = parsed.flatMap((f) => f.pairs);
+      if (nFields >= 2 && pairs.length >= 2) {
+        blocks.push({ y: row.y0, block: { type: "key_value", pairs, uncertain: pairs.some((p) => p.uncertain) } });
+        const rest = parsed.flatMap((f) => f.rest);
+        if (rest.length) blocks.push({ y: row.y0 + 0.5, block: { type: "paragraph", text: rest.join("\n"), uncertain: false } });
+        i = j;
+        continue;
+      }
+    }
 
     // Borderless table: >= 2 consecutive rows that each split into >= 2 columns.
     // Rows of "Label:  value" (form fields) and rows of data columns are kept apart.
@@ -589,4 +750,43 @@ export function buildLayout(cv, gray, lines, grid = gray ? ruledGrid(cv, gray) :
     } });
   }
   return harmonizeCodes(blocks.sort((a, b) => a.y - b.y).map((b) => b.block));
+}
+
+/**
+ * Split recognised lines that run across a printed column rule ("5540 KYB" read as one line over
+ * two cells). Each part keeps its own characters and a box cut at the rule.
+ */
+export function splitLinesAtGrid(grid, lines) {
+  if (!grid) return lines;
+  const inner = grid.xs.slice(1, -1);
+  const out = [];
+  for (const l of lines) {
+    if (l.vertical || !l.chars?.length) { out.push(l); continue; }
+    const xs = l.pts.map((p) => p[0]), ys = l.pts.map((p) => p[1]);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    if (cy < grid.ys[0] || cy > grid.ys[grid.ys.length - 1]) { out.push(l); continue; }
+    const h = Math.max(...ys) - Math.min(...ys);
+    const cuts = inner.filter((x) => x > x0 + 0.3 * h && x < x1 - 0.3 * h);
+    if (!cuts.length) { out.push(l); continue; }
+    const bounds = [x0, ...cuts, x1];
+    const pieces = [];
+    for (let k = 0; k < bounds.length - 1; k++) {
+      const a = bounds[k], b = bounds[k + 1];
+      const chars = l.chars.filter((c) => { const px = x0 + c.x * (x1 - x0); return px >= a && (px < b || k === bounds.length - 2); });
+      const text = chars.map((c) => c.c).join("").trim();
+      if (!text) continue;
+      const fa = (a - x0) / (x1 - x0), fb = (b - x0) / (x1 - x0);
+      const lerp = (p, q, f) => [p[0] + (q[0] - p[0]) * f, p[1] + (q[1] - p[1]) * f];
+      const [p0, p1, p2, p3] = l.pts;
+      const pc = chars.filter((c) => c.c.trim());
+      pieces.push({
+        ...l, text,
+        pts: [lerp(p0, p1, fa), lerp(p0, p1, fb), lerp(p3, p2, fb), lerp(p3, p2, fa)],
+        chars: chars.map((c) => ({ ...c, x: (c.x - fa) / (fb - fa) })),
+        minProb: pc.length ? Math.min(...pc.map((c) => c.p)) : l.minProb,
+      });
+    }
+    if (pieces.length > 1) out.push(...pieces); else out.push(l);
+  }
+  return out;
 }

@@ -22,6 +22,13 @@ get it back as **Excel, Word, PDF, CSV, Markdown, text or JSON**. You choose the
   crossed-out entries are kept but struck through in Excel, Word and PDF. Codes that repeat down
   the page (part numbers) are cross-checked, so a doubtful copy of a code is corrected from a
   confident one and flagged. Scribbled-out marks are ignored.
+- **Reads printed reports and photographed tables.** Pages shot sideways or upside down are
+  turned upright; thin grey table rules are found even when the photo is slightly skewed, and text
+  printed across a column rule is split into its cells. Report headers ("Pick list : 93.0017",
+  "Supervisor : LFS", two fields on one line) become Field/Value pairs, and record tables with an
+  indented description line under each item keep their columns. When the page's corners are
+  out of the frame, the desk, keyboard or other papers around it are blanked out, and a curled
+  page's rows are straightened before rows are formed.
 - Multi-page scans, camera, gallery and scanned-PDF input, per-page rotation, automatic page
   flattening and straightening, and a history of recent scans (stored on the device only).
 
