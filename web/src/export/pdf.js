@@ -34,6 +34,7 @@ export async function toPdf(doc) {
               widths: b.rows[0].map(() => "*"),
               body: b.rows.map((row, r) => row.map((c) => ({
                 ...txt(c.text, c.uncertain),
+                ...(c.struck ? { decoration: "lineThrough", color: "#7A7F8C" } : {}),
                 ...(r < hdr ? { bold: true, color: "#FFFFFF", fillColor: "#1F2A44" } : {}),
               }))),
             },

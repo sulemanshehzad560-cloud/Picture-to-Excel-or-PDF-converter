@@ -16,6 +16,12 @@ get it back as **Excel, Word, PDF, CSV, Markdown, text or JSON**. You choose the
 - **Flags doubt.** Low-confidence readings are highlighted in the app, in Excel (with a cell
   comment), and in Word and PDF.
 - **Edit before export.** Tap any cell or line to correct it; every download includes your edits.
+- **Reads handwritten ledgers and stock sheets.** Hand-drawn column lines define the columns,
+  even when tilted. Tick marks become a ✓ column, even when a tick runs into the text or into a
+  stroke towards the quantity. Circled section numbers (② ③ ④) become section rows, and
+  crossed-out entries are kept but struck through in Excel, Word and PDF. Codes that repeat down
+  the page (part numbers) are cross-checked, so a doubtful copy of a code is corrected from a
+  confident one and flagged. Scribbled-out marks are ignored.
 - Multi-page scans, camera, gallery and scanned-PDF input, per-page rotation, automatic page
   flattening and straightening, and a history of recent scans (stored on the device only).
 
@@ -51,6 +57,8 @@ Never commit a keystore; `*.jks` and `keystore.properties` are git-ignored.
 ```bash
 npm install
 npm run build        # downloads + verifies the OCR models (PyPI), builds the web app into dist/
+                     # (OpenCV.js is pinned to 4.10: the 4.12/5.0 builds share memory between
+                     #  an image and its copies, which silently corrupts pages)
 npm run dev          # live-reload dev server at http://localhost:5173
 npm test             # exporter, layout and end-to-end recognition tests (Node, same WASM engine)
 
@@ -75,7 +83,8 @@ photo / PDF ─► flatten page, measure noise ─► detect text lines (PP-OCRv
 |---|---|
 | `web/src/ocr/ppocr.js` | Detection, recognition and orientation models: pre/post-processing matching PaddleOCR |
 | `web/src/ocr/engine.js` | The page pipeline and the Fast / High / Maximum precision modes |
-| `web/src/ocr/layout.js` | Tables (ruled and borderless), form fields, lists, headings, paragraphs, uncertainty |
+| `web/src/ocr/layout.js` | Tables (ruled, borderless, hand-drawn column lines), tick columns, section markers, form fields, lists, headings, code cross-checks |
+| `web/src/ocr/marks.js` | Hand-drawn column lines, circled numbers, strike-throughs, pen-mark detection |
 | `web/src/ocr/preprocess.js` | Page flattening, noise-matched denoise, shadow removal, contrast |
 | `web/src/export/` | Excel, Word, PDF, CSV, Markdown, text, JSON: all on-device |
 | `web/src/main.js` | The app UI; `platform.js` handles the Android camera and saving/sharing files |
@@ -102,6 +111,7 @@ size, cursive.
 | Cursive table | 31% / 12% / 7% | **100% / 75% / 86%** |
 | Borderless handwritten list | 69% / 0% / 36% | **100% / 96% / 100%** |
 | Handwritten form | 69% / – / 33% | **100% / – / 100%** |
+| Stock sheet (column lines, ticks, ②③, struck row) | – | **100% / 98% / 96%** |
 
 *Cells* = table cells reproduced exactly. *Numbers* = every digit, dot and comma exact.
 Most remaining misses are ornate cursive capitals (a fancy "T" read as "J"). Where the model

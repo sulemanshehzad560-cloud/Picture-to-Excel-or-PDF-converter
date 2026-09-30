@@ -1,5 +1,5 @@
-// Downloads the on-device OCR models into web/public/models/ and copies the ONNX Runtime
-// WebAssembly files into web/public/ort/ (served as-is so its worker threads can load them).
+// Downloads the on-device OCR models into web/public/models/, and copies the ONNX Runtime
+// WebAssembly files (web/public/ort/) and OpenCV.js (web/public/opencv/) to be served as-is.
 //
 // Models: PaddleOCR PP-OCRv6 (Apache-2.0), as redistributed in the RapidOCR wheel on PyPI.
 // Every file is pinned by SHA-256 (the same hashes RapidOCR publishes), so a build can never
@@ -15,6 +15,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const modelsDir = join(root, "web/public/models");
 const ortDir = join(root, "web/public/ort");
 const ORT_FILES = ["ort-wasm-simd-threaded.mjs", "ort-wasm-simd-threaded.wasm"];
+const cvDir = join(root, "web/public/opencv");
+// OpenCV.js is loaded at runtime (not bundled). Pinned to 4.10: the 4.12 and 5.0 builds share
+// memory between a Mat and its "copies", which silently corrupts images.
+const CV_SRC = join(root, "node_modules/@techstark/opencv-js/dist/opencv.js");
 
 const WHEEL = {
   url: "https://files.pythonhosted.org/packages/55/ed/0ee9b9281986974be9d2406ae0134c8d7c91d2fc613f16ffda9701eeda6f/rapidocr-3.9.2-py3-none-any.whl",
@@ -114,6 +118,9 @@ async function main() {
     const dst = join(ortDir, f);
     if (!existsSync(dst) || sha256(readFileSync(src)) !== sha256(readFileSync(dst))) copyFileSync(src, dst);
   }
+  mkdirSync(cvDir, { recursive: true });
+  const cvDst = join(cvDir, "opencv.js");
+  if (!existsSync(cvDst) || sha256(readFileSync(CV_SRC)) !== sha256(readFileSync(cvDst))) copyFileSync(CV_SRC, cvDst);
   console.log("Models and runtime ready in web/public/");
 }
 

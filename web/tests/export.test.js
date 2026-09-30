@@ -22,7 +22,7 @@ export function sampleDoc() {
             [{ text: "Item" }, { text: "Qty" }, { text: "Price" }],
             [{ text: "Pencils" }, { text: "12" }, { text: "0.750" }],
             [{ text: "Ink" }, { text: "1,200" }, { text: "$3.10", uncertain: true }],
-            [{ text: "=SUM(A1)" }, { text: "-4" }, { text: "12.5%" }],
+            [{ text: "=SUM(A1)" }, { text: "-4" }, { text: "12.5%", struck: true }],
             [{ text: "short row" }],
           ],
         },
@@ -61,6 +61,7 @@ test("xlsx: typed numbers, exact formats, flagged cells, no formula injection", 
   assert.equal(ws.getCell("B3").value, 1200);
   assert.equal(ws.getCell("C3").fill.fgColor.argb, "FFFFF2A8");
   assert.ok(ws.getCell("C3").note);
+  assert.equal(ws.getCell("C4").font.strike, true); // crossed out on paper -> strike-through
   assert.equal(ws.getCell("A4").formula, undefined);
   assert.equal(ws.getCell("A4").text, "=SUM(A1)");
   const content = wb.getWorksheet("Content");

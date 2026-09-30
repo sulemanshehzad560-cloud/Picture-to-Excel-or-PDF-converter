@@ -55,7 +55,7 @@ def _safe_title(name: str, used: set[str]) -> str:
     return name
 
 
-def _write_cell(ws, row: int, col: int, text: str, uncertain: bool, header: bool = False):
+def _write_cell(ws, row: int, col: int, text: str, uncertain: bool, header: bool = False, struck: bool = False):
     cell = ws.cell(row=row, column=col)
     parsed = None if header else as_number(text)
     if parsed:
@@ -71,6 +71,8 @@ def _write_cell(ws, row: int, col: int, text: str, uncertain: bool, header: bool
     if uncertain:
         cell.fill = UNCERTAIN_FILL
         cell.comment = Comment("Low-confidence reading - please verify against the original.", "Scanner")
+    if struck:
+        cell.font = Font(strike=True, color="7A7F8C", bold=header)
     return cell
 
 
@@ -98,7 +100,7 @@ def to_xlsx(doc: ExtractedDocument) -> bytes:
         hdr = block.header_rows or 0
         for r, row in enumerate(block.rows, 1):
             for c, cell in enumerate(row, 1):
-                _write_cell(ws, r, c, cell.text, cell.uncertain, header=r <= hdr)
+                _write_cell(ws, r, c, cell.text, cell.uncertain, header=r <= hdr, struck=cell.struck)
         if hdr:
             ws.freeze_panes = ws.cell(row=hdr + 1, column=1)
         _autofit(ws)

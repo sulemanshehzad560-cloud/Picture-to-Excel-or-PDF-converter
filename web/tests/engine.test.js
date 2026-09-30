@@ -62,6 +62,7 @@ const cases = {
   handwritten_table_medium: { text: 0.95, cells: 0.9, numbers: 0.9 },
   messy_clean_borderless: { text: 0.95, cells: 0.85, numbers: 0.9 },
   messy_clean_form: { text: 0.95, numbers: 0.9 },
+  ledger_sheet: { cells: 0.9, numbers: 0.9 },
 };
 
 for (const [name, min] of Object.entries(cases)) {

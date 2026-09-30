@@ -274,6 +274,73 @@ def messy_clean_form(font="IndieFlower", seed=14) -> Sample:
     return Sample("messy_clean_form", "messy", encode(to_cv(c.img)), lines)
 
 
+LEDGER = [
+    # (part number, ticked, qty in column 1, qty in column 2, struck)
+    ("PART-NO", False, "", "", False),
+    ("TC500368-083", True, "06", "", False),
+    ("ECSF1546PB", True, "12", "", False),
+    ("LCPM20A4LR", True, "", "30", False),
+    ("ATFMT4SB", False, "04", "", False),
+    ("0888-83717", True, "02", "", False),
+    ("08886-02505", False, "", "01", True),
+    ("@2", False, "", "", False),
+    ("ECSF2056PB", True, "3+10", "", False),
+    ("908966-V4", True, "1", "", False),
+    ("BFSD4500GB", True, "6", "", False),
+    ("@3", False, "", "", False),
+    ("08885-81162", True, "19", "", False),
+    ("6925L", False, "", "4572", False),
+]
+
+
+def _wobbly_line(draw, x0, y0, x1, y1, rng, width=3, color=(30, 40, 110), amp=2.0):
+    pts = []
+    n = 24
+    for i in range(n + 1):
+        t = i / n
+        pts.append((x0 + (x1 - x0) * t + rng.uniform(-amp, amp), y0 + (y1 - y0) * t + rng.uniform(-amp, amp)))
+    draw.line(pts, fill=color, width=width, joint="curve")
+
+
+def ledger_sheet(font="IndieFlower", seed=21, photo_=True) -> Sample:
+    """A stock sheet like a real one: hand-drawn column lines, ticks, circled section numbers,
+    a struck-out entry and a totals row, on ruled notebook paper."""
+    c = Canvas(ruled=True, seed=seed, paper=(252, 252, 250))
+    rng = c.rng
+    ink = (30, 40, 110)
+    rules_x = [560, 800, 1010]
+    for i, x in enumerate(rules_x):
+        _wobbly_line(c.draw, x, 70, x - 18 + i * 6, 2150, rng, width=3, amp=1.5)
+    y = 110
+    table = []
+    for part, ticked, q1, q2, struck in LEDGER:
+        if part.startswith("@"):
+            n = int(part[1:])
+            cx, cy = 505, y + 30
+            c.draw.ellipse([cx - 34, cy - 22, cx + 34, cy + 22], outline=ink, width=3)
+            c.hand((cx - 12, cy - 30), str(n), font_path(font), size=46, ink=ink, jitter=0.6)
+            table.append(["①②③④⑤⑥⑦⑧⑨"[n - 1], "", "", ""])
+        else:
+            c.hand((150 + rng.randint(-8, 10), y), part, font_path(font), size=56, ink=ink, jitter=1.4)
+            if ticked:
+                tx, ty = 490 + rng.randint(-6, 6), y + 26
+                c.draw.line([(tx, ty), (tx + 12, ty + 18), (tx + 36, ty - 14)], fill=ink, width=4, joint="curve")
+            if q1:
+                c.hand((590 + rng.randint(-5, 20), y), q1, font_path(font), size=56, ink=ink, jitter=1.2)
+            if q2:
+                c.hand((830 + rng.randint(-5, 20), y), q2, font_path(font), size=56, ink=ink, jitter=1.2)
+            if struck:
+                _wobbly_line(c.draw, 140, y + 36, 470, y + 32, rng, width=4, amp=3)
+                _wobbly_line(c.draw, 820, y + 36, 900, y + 34, rng, width=4, amp=2)
+            # The app labels the tick column "✓" in the header row.
+            table.append([part, "✓" if ticked or part == "PART-NO" else "", q1, q2])
+        y += 128
+    img = to_cv(c.img)
+    if photo_:
+        img = photo(img, random.Random(seed), tilt=2, persp=0.02, bg=(90, 60, 40))
+    return Sample("ledger_sheet", "messy", encode(img), ["PART-NO"], table)
+
+
 def all_samples() -> list[Sample]:
     return [
         printed_invoice(),
@@ -292,6 +359,7 @@ def all_samples() -> list[Sample]:
         messy_clean_table(),
         messy_clean_borderless(),
         messy_clean_form(),
+        ledger_sheet(),
     ]
 
 

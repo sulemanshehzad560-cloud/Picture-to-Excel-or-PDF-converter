@@ -30,7 +30,7 @@ export function toMarkdown(doc) {
       if (b.type === "heading") out.push(`${"#".repeat(Math.min(6, (b.level || 1) + (doc.title ? 1 : 0)))} ${b.text || ""}`);
       else if (b.type === "table" && b.rows?.length) {
         const esc = (s) => s.replace(/\|/g, "\\|").replace(/\n/g, "<br>");
-        const rows = b.rows.map((r) => r.map((c) => esc(c.text) + (c.uncertain ? " ⚠" : "")));
+        const rows = b.rows.map((r) => r.map((c) => (c.struck && c.text ? `~~${esc(c.text)}~~` : esc(c.text)) + (c.uncertain ? " ⚠" : "")));
         out.push(`| ${rows[0].join(" | ")} |`, `|${"---|".repeat(rows[0].length)}`);
         for (const r of (b.header_rows ? rows.slice(1) : rows)) out.push(`| ${r.join(" | ")} |`);
       } else if (b.type === "key_value") out.push(...(b.pairs || []).map((kv) => `- **${kv.key}:** ${kv.value}`));

@@ -17,6 +17,7 @@ BlockType = Literal["heading", "paragraph", "list", "table", "key_value", "check
 class Cell(BaseModel):
     text: str = ""
     uncertain: bool = False
+    struck: bool = False  # crossed out on the original
 
 
 class KeyValue(BaseModel):

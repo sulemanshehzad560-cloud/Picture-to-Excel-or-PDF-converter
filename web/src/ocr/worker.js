@@ -3,8 +3,6 @@
 // in : {type:"init", base} | {type:"recognize", id, blob, rotation, precision, flatten}
 // out: {type:"ready", threads} | {type:"progress", id, step} | {type:"result", id, ...} | {type:"error", id, message}
 
-import cvModule from "@techstark/opencv-js";
-import * as ort from "onnxruntime-web/wasm";
 import { recognizePage } from "./engine.js";
 import { PPOCR } from "./ppocr.js";
 
@@ -13,24 +11,40 @@ let BASE = null; // app root URL, sent by the page with "init" (models and runti
 
 let envPromise;
 
+/**
+ * OpenCV.js is served as its own file (web/public/opencv/opencv.js) and evaluated here, not
+ * bundled: bundling wraps it in strict-mode ES-module code, which makes OpenCV 4.10 hang during
+ * start-up in a worker. Loaded this way it is ready in about a second.
+ */
 async function loadCv() {
-  if (cvModule instanceof Promise) return await cvModule;
-  if (cvModule.Mat) return cvModule;
-  await new Promise((resolve) => { cvModule.onRuntimeInitialized = resolve; });
-  return cvModule;
+  const ready = () => (self.cv && typeof self.cv.Mat === "function" ? self.cv : null);
+  if (ready()) return ready();
+  const res = await fetch(new URL("opencv/opencv.js", BASE));
+  if (!res.ok) throw new Error(`Could not load the image engine (${res.status})`);
+  (0, eval)(await res.text()); // defines self.cv (UMD build)
+  // Poll for readiness. Overriding cv.onRuntimeInitialized here can swallow OpenCV's own
+  // start-up callback and leave it waiting forever.
+  for (let i = 0; i < 600 && !ready(); i++) await new Promise((r) => setTimeout(r, 50));
+  const cv = ready();
+  if (!cv) throw new Error("Image engine (OpenCV) failed to start");
+  // OpenCV's module is "thenable" (it has a .then helper). Returning it from an async function
+  // makes JavaScript unwrap it again and again forever, freezing the worker. Remove the helper.
+  if (typeof cv.then === "function") delete cv.then;
+  return cv;
 }
 
 function init() {
   envPromise ??= (async () => {
     const threads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 2) : 1;
-    ort.env.wasm.numThreads = threads;
-    ort.env.wasm.wasmPaths = new URL("ort/", BASE).href;
     const load = async (name) => {
       const res = await fetch(new URL(`models/${name}`, BASE));
       if (!res.ok) throw new Error(`Could not load ${name} (${res.status})`);
       return new Uint8Array(await res.arrayBuffer());
     };
-    const [cv, ocr] = await Promise.all([loadCv(), PPOCR.create(ort, load)]);
+    const [cv, ort] = await Promise.all([loadCv(), import("onnxruntime-web/wasm")]);
+    ort.env.wasm.numThreads = threads;
+    ort.env.wasm.wasmPaths = new URL("ort/", BASE).href;
+    const ocr = await PPOCR.create(ort, load);
     return { cv, ocr, threads };
   })();
   return envPromise;

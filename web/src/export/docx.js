@@ -6,18 +6,18 @@ import {
 const GRID = { style: BorderStyle.SINGLE, size: 4, color: "B7BDC9" };
 const BORDERS = { top: GRID, bottom: GRID, left: GRID, right: GRID, insideHorizontal: GRID, insideVertical: GRID };
 
-function runs(text, { uncertain = false, bold = false, italics = false, color, size } = {}) {
+function runs(text, { uncertain = false, bold = false, italics = false, color, size, strike = false } = {}) {
   const lines = String(text ?? "").split("\n");
   return lines.map((line, i) => new TextRun({
-    text: line, bold, italics, color, size,
+    text: line, bold, italics, color, size, strike,
     highlight: uncertain ? "yellow" : undefined,
     break: i > 0 ? 1 : undefined,
   }));
 }
 
-function cell(text, { uncertain, header, shade } = {}) {
+function cell(text, { uncertain, header, shade, struck } = {}) {
   return new TableCell({
-    children: [new Paragraph({ children: runs(text, { uncertain, bold: header }) })],
+    children: [new Paragraph({ children: runs(text, { uncertain, bold: header, strike: struck }) })],
     shading: shade ? { type: ShadingType.CLEAR, color: "auto", fill: shade } : undefined,
   });
 }
@@ -54,7 +54,7 @@ export async function toDocx(doc) {
           const hdr = b.header_rows || 0;
           children.push(table(b.rows.map((row, r) => new TableRow({
             tableHeader: r < hdr,
-            children: row.map((c) => cell(c.text, { uncertain: c.uncertain, header: r < hdr, shade: r < hdr ? "DCE3F0" : undefined })),
+            children: row.map((c) => cell(c.text, { uncertain: c.uncertain, struck: c.struck, header: r < hdr, shade: r < hdr ? "DCE3F0" : undefined })),
           }))));
           children.push(new Paragraph({}));
           break;

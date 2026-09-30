@@ -353,3 +353,5 @@ main { max-width: 1320px; margin: 0 auto; padding: 24px clamp(16px, 4vw, 40px) c
 .hcard .del { position: absolute; top: 8px; right: 8px; width: 28px; height: 28px; border-radius: 50%; border: 0; background: rgba(5, 7, 13, 0.8); }
 .hcard .del:hover { background: var(--danger); }
 .thread-note { font-size: 11px; }
+.doc td.struck { text-decoration: line-through; text-decoration-thickness: 2px; color: var(--muted); }
+.doc td.struck::after { content: " ✕"; font-size: 10px; color: var(--muted); }

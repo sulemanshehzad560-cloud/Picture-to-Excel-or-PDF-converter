@@ -18,7 +18,7 @@ function sheetName(name, used) {
   return out;
 }
 
-function write(ws, r, c, text, { uncertain = false, header = false } = {}) {
+function write(ws, r, c, text, { uncertain = false, header = false, struck = false } = {}) {
   const cell = ws.getCell(r, c);
   const num = header ? null : asNumber(text);
   if (num) {
@@ -37,6 +37,11 @@ function write(ws, r, c, text, { uncertain = false, header = false } = {}) {
   if (uncertain) {
     cell.fill = UNCERTAIN_FILL;
     cell.note = NOTE;
+  }
+  if (struck) {
+    // Crossed out on paper: kept (it may matter) but struck through, exactly as written.
+    cell.font = { ...(cell.font || {}), strike: true, color: { argb: "FF7A7F8C" } };
+    cell.note = cell.note ? `${cell.note}\nCrossed out on the original.` : "Crossed out on the original.";
   }
 }
 
@@ -61,7 +66,7 @@ export async function toXlsx(doc) {
   for (const { page, n, block } of tbls) {
     const ws = wb.addWorksheet(sheetName(doc.pages.length === 1 ? `Table ${n}` : `P${page} Table ${n}`, used));
     const hdr = block.header_rows || 0;
-    block.rows.forEach((row, r) => row.forEach((cell, c) => write(ws, r + 1, c + 1, cell.text, { uncertain: cell.uncertain, header: r < hdr })));
+    block.rows.forEach((row, r) => row.forEach((cell, c) => write(ws, r + 1, c + 1, cell.text, { uncertain: cell.uncertain, header: r < hdr, struck: cell.struck })));
     if (hdr) ws.views = [{ state: "frozen", ySplit: hdr }];
     autofit(ws);
   }

@@ -547,7 +547,10 @@ function renderTable(b) {
     const table = el("table");
     (b.rows || []).forEach((row, r) => {
       const tr = el("tr", { class: r < (b.header_rows || 0) ? "hdr" : "" });
-      row.forEach((cell) => tr.append(editable("td", cell, "text", { class: cell.uncertain ? "unc" : "", title: cell.uncertain ? "Low-confidence reading" : "" })));
+      row.forEach((cell) => tr.append(editable("td", cell, "text", {
+        class: [cell.uncertain ? "unc" : "", cell.struck ? "struck" : ""].join(" ").trim(),
+        title: [cell.uncertain ? "Low-confidence reading" : "", cell.struck ? "Crossed out on the original" : ""].filter(Boolean).join(" · "),
+      })));
       table.append(tr);
     });
     const width = b.rows?.[0]?.length || 1;

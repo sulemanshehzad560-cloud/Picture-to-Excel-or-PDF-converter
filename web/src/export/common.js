@@ -27,7 +27,7 @@ export function tables(doc) {
 export function blockText(b) {
   switch (b.type) {
     case "list": return (b.items || []).map((x, i) => (b.ordered ? `${i + 1}. ` : "• ") + x).join("\n");
-    case "table": return (b.rows || []).map((r) => r.map((c) => c.text).join("\t")).join("\n");
+    case "table": return (b.rows || []).map((r) => r.map((c) => (c.struck && c.text ? `~~${c.text}~~` : c.text)).join("\t")).join("\n");
     case "key_value": return (b.pairs || []).map((kv) => `${kv.key}: ${kv.value}`).join("\n");
     case "checkbox": return `[${b.checked ? "x" : " "}] ${b.text || ""}`;
     case "signature": return `(signature) ${b.text || ""}`.trim();
