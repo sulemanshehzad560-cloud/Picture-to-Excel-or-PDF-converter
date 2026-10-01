@@ -6,12 +6,12 @@
    `OMNISCAN_UPLOAD_PASSWORD`.
 3. Run **Actions → Build Android app → Run workflow** on `main`. The GitHub Release it creates
    contains `OmniScan-1.0.N.aab` (for Play) and `OmniScan-1.0.N.apk` (to install directly).
-4. **AdMob** (https://apps.admob.com): add an app (Android, not yet listed is fine, package
-   `com.sulemanshehzad.omniscan`), create one **Banner** ad unit, and put both IDs in
-   `admob.config.json`. Until then only Google's test ads are shown. In AdMob, also set up
-   **Privacy & messaging → GDPR** (European regulations) and publish the message, so the consent
-   form appears for EEA/UK users. Once the app is live on Play, link it in AdMob (App settings →
-   App store details) and add `app-ads.txt` to your developer website if you have one.
+4. **AdMob**: the app (`ca-app-pub-4940350948200557~3440088459`) and its banner unit
+   (`.../1721305965`) are set in `admob.config.json`. The Play Store build shows live ads; the
+   debug APK from GitHub always shows Google's test ads, so test freely without tapping live ads.
+   In AdMob, set up **Privacy & messaging → GDPR** (European regulations) and publish the message
+   so the consent form appears for EEA/UK users. Once the app is live on Play, link it in AdMob
+   (App settings → App store details) and add `app-ads.txt` to your developer website if you have one.
 
 ## 2. Create the app in Play Console
 - App name: **OmniScan: Handwriting to Excel**

@@ -6,7 +6,21 @@ import config from "../../admob.config.json";
 import { isNative } from "./platform.js";
 
 const TEST_PUBLISHER = "ca-app-pub-3940256099942544";
-const testing = config.bannerId.startsWith(TEST_PUBLISHER);
+const TEST_BANNER = "ca-app-pub-3940256099942544/9214589741";
+let bannerId = config.bannerId;
+let testing = bannerId.startsWith(TEST_PUBLISHER);
+
+/**
+ * Debug builds (the APK from GitHub, for trying the app) always show Google's test ads, so tapping
+ * an ad while testing never counts as an invalid click. Only debug builds contain build-type.json
+ * (android/app/src/debug/assets); the Play Store build serves live ads.
+ */
+async function useTestAdsInDebug() {
+  try {
+    const r = await fetch("build-type.json", { cache: "no-store" });
+    if (r.ok && (await r.json()).debug) { bannerId = TEST_BANNER; testing = true; }
+  } catch { /* release build: no file */ }
+}
 
 let AdMob = null, shown = false, wanted = true, privacyRequired = false;
 const listeners = new Set();
@@ -25,6 +39,7 @@ function setInset(px) {
 export async function initAds() {
   if (!isNative || !config.bannerId) return;
   try {
+    await useTestAdsInDebug();
     ({ AdMob } = await import("@capacitor-community/admob"));
     let info = await AdMob.requestConsentInfo();
     if (info.isConsentFormAvailable && info.status === "REQUIRED") info = await AdMob.showConsentForm();
@@ -44,7 +59,7 @@ async function showBanner() {
   if (!AdMob || shown) return;
   shown = true;
   await AdMob.showBanner({
-    adId: config.bannerId,
+    adId: bannerId,
     adSize: "ADAPTIVE_BANNER",
     position: "BOTTOM_CENTER",
     margin: 0,

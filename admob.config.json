@@ -1,5 +1,5 @@
 {
-  "_comment": "AdMob IDs for OmniScan. Create the app (Android, com.sulemanshehzad.omniscan) and one Banner ad unit at https://apps.admob.com, then paste both IDs here. Until then Google's test IDs are used and only test ads are shown.",
-  "appId": "ca-app-pub-3940256099942544~3347511713",
-  "bannerId": "ca-app-pub-3940256099942544/9214589741"
+  "_comment": "AdMob IDs for OmniScan (Android, com.sulemanshehzad.omniscan): the app ID and its banner ad unit, from https://apps.admob.com. Debug builds keep using Google's test ad unit (see web/src/ads.js).",
+  "appId": "ca-app-pub-4940350948200557~3440088459",
+  "bannerId": "ca-app-pub-4940350948200557/1721305965"
 }
