@@ -28,9 +28,17 @@
             android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- AdMob app ID, from admob.config.json (see android/app/build.gradle). -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="${admobAppId}" />
     </application>
 
-    <!-- Permissions. No INTERNET: OmniScan works fully offline and never uploads anything. -->
+    <!-- Permissions. INTERNET is only for the ad banner and Google's consent form: scanning and
+         exports stay fully on the device and documents are never uploaded. The advertising ID
+         permission (AD_ID) is added by the Google Mobile Ads SDK. -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- Only needed on Android 10 and older to save exports into Documents/OmniScan. -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />

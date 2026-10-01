@@ -11,7 +11,8 @@ get it back as **Excel, Word, PDF, CSV, Markdown, text or JSON**. You choose the
   per table and a plain document.
 
 - **Runs on your phone, offline.** Recognition uses PaddleOCR's PP-OCRv6 neural models on-device
-  (ONNX Runtime WebAssembly). No API key, no account, no internet, and nothing is uploaded.
+  (ONNX Runtime WebAssembly). No API key, no account, and your documents are never uploaded.
+  Free, with one small AdMob banner (Google's consent form where the law requires it).
 - **Reads messy handwriting.** Neural line recognition plus a second, contrast-enhanced read of
   every doubtful word. A digit-aware correction fixes classic slips ("202s" → "2025",
   "450.7s" → "450.75") and flags each fix.
@@ -53,8 +54,15 @@ Privacy policy: [PRIVACY.md](PRIVACY.md).
 
 ### Signing
 
-Google Play needs the app signed with your **upload key**. Add four repository secrets
-(Settings → Secrets and variables → Actions):
+Google Play needs the app signed with your **upload key**. The key is committed only in
+encrypted form (`android/upload-keystore.jks.enc`, alias `omniscan`); add **one** repository secret
+(Settings → Secrets and variables → Actions) to unlock it in CI:
+
+| Secret | Value |
+|---|---|
+| `OMNISCAN_UPLOAD_PASSWORD` | the upload key's password |
+
+Or, to use a different key, add these four instead:
 
 | Secret | Value |
 |---|---|
@@ -63,7 +71,8 @@ Google Play needs the app signed with your **upload key**. Add four repository s
 | `OMNISCAN_KEY_ALIAS` | key alias (`omniscan`) |
 | `OMNISCAN_KEY_PASSWORD` | key password |
 
-Without them, the workflow still builds a debug-signed APK you can install for personal use.
+Without them, the workflow builds a debug APK you can install for personal use and an unsigned
+AAB (`jarsigner -keystore omniscan-upload.jks OmniScan-1.0.N-unsigned.aab omniscan` signs it).
 Never commit a keystore; `*.jks` and `keystore.properties` are git-ignored.
 
 ## Develop
@@ -105,7 +114,8 @@ photo / PDF ─► flatten page, measure noise ─► detect text lines (PP-OCRv
 | `web/src/export/replica.js` | Page copy: where everything sits on the page; `xlsx-page.js`, `docx-page.js`, `pdf-page.js` draw it |
 | `web/src/ocr/style.js` | Look of the page: text colour and weight, shaded cells and banded rows |
 | `web/src/main.js` | The app UI; `platform.js` handles the Android camera and saving/sharing files |
-| `android/` | Capacitor Android project (target SDK 36, no INTERNET permission) |
+| `android/` | Capacitor Android project (target SDK 36; internet only for the ad banner) |
+| `web/src/ads.js`, `admob.config.json` | AdMob banner + consent form; put your AdMob app ID and banner unit ID in the JSON |
 | `scripts/fetch-models.mjs` | Downloads the models from PyPI and checks their SHA-256 hashes |
 | `app/` | Optional Python server and API (Claude vision engine and Tesseract, legacy) |
 

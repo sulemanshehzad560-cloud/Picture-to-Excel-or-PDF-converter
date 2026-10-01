@@ -369,3 +369,18 @@ main { max-width: 1320px; margin: 0 auto; padding: 24px clamp(16px, 4vw, 40px) c
 }
 .page-copy .pc-text.unc { background: rgba(255, 214, 10, 0.45); border-radius: 2px; }
 .page-copy .pc-text.struck { text-decoration: line-through; }
+
+/* AdMob banner (Android): the native banner sits at the bottom, above the system bar. Content and
+   toasts move up by its height, and a label marks it as an advertisement, clear of the app's buttons. */
+:root { --ad-inset: 0px; }
+body.has-ad main { padding-bottom: calc(60px + var(--ad-inset) + 18px + env(safe-area-inset-bottom)); }
+body.has-ad .toast { bottom: calc(24px + var(--ad-inset) + 18px + env(safe-area-inset-bottom)); }
+.ad-label { display: none; }
+body.has-ad .ad-label {
+  display: block; position: fixed; left: 0; right: 0; z-index: 5;
+  bottom: calc(var(--ad-inset) + env(safe-area-inset-bottom)); height: 18px; line-height: 18px;
+  text-align: center; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--muted, #8b93a7); background: #05070d; border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.app-foot { text-align: center; padding: 0 0 12px; }
+.app-foot .link { background: none; border: 0; color: var(--muted, #8b93a7); text-decoration: underline; cursor: pointer; font: inherit; }

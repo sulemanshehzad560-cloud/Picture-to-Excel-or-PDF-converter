@@ -3,12 +3,12 @@ name: Build Android app
 # Builds the OmniScan APK (install on your phone) and AAB (upload to Google Play).
 # Pushes to main also publish a GitHub Release with both files attached.
 #
-# Release signing uses four repository secrets (Settings > Secrets and variables > Actions):
-#   OMNISCAN_KEYSTORE_BASE64   base64 of your upload keystore (.jks)
-#   OMNISCAN_KEYSTORE_PASSWORD keystore password
-#   OMNISCAN_KEY_ALIAS         key alias (omniscan)
-#   OMNISCAN_KEY_PASSWORD      key password
-# Without them the workflow still builds an installable debug-signed APK for personal use.
+# Release signing (Settings > Secrets and variables > Actions), either:
+#   OMNISCAN_UPLOAD_PASSWORD   one secret: unlocks the encrypted upload key committed as
+#                              android/upload-keystore.jks.enc (alias "omniscan"), or
+#   OMNISCAN_KEYSTORE_BASE64 + OMNISCAN_KEYSTORE_PASSWORD + OMNISCAN_KEY_ALIAS + OMNISCAN_KEY_PASSWORD
+# Without them the workflow builds an installable debug APK and an unsigned AAB (sign it with
+# jarsigner and your upload key before uploading it to Google Play).
 
 on:
   push:
@@ -77,14 +77,22 @@ jobs:
       - name: Prepare signing key
         id: signing
         env:
+          UPLOAD_PASSWORD: ${{ secrets.OMNISCAN_UPLOAD_PASSWORD }}
           KEYSTORE_B64: ${{ secrets.OMNISCAN_KEYSTORE_BASE64 }}
         run: |
-          if [ -n "$KEYSTORE_B64" ]; then
+          if [ -n "$UPLOAD_PASSWORD" ]; then
+            openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in android/upload-keystore.jks.enc \
+              -out "$RUNNER_TEMP/upload.jks" -pass env:UPLOAD_PASSWORD
+            echo "keystore=$RUNNER_TEMP/upload.jks" >> "$GITHUB_OUTPUT"
+            echo "mode=encrypted" >> "$GITHUB_OUTPUT"
+            echo "Release signing: enabled (committed upload key)"
+          elif [ -n "$KEYSTORE_B64" ]; then
             echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/upload.jks"
             echo "keystore=$RUNNER_TEMP/upload.jks" >> "$GITHUB_OUTPUT"
+            echo "mode=secrets" >> "$GITHUB_OUTPUT"
             echo "Release signing: enabled"
           else
-            echo "Release signing: no secrets set, building a debug-signed APK only"
+            echo "Release signing: no secrets set, building a debug APK and an unsigned AAB"
           fi
 
       - name: Build signed release APK + AAB
@@ -92,9 +100,9 @@ jobs:
         working-directory: android
         env:
           OMNISCAN_KEYSTORE: ${{ steps.signing.outputs.keystore }}
-          OMNISCAN_KEYSTORE_PASSWORD: ${{ secrets.OMNISCAN_KEYSTORE_PASSWORD }}
-          OMNISCAN_KEY_ALIAS: ${{ secrets.OMNISCAN_KEY_ALIAS }}
-          OMNISCAN_KEY_PASSWORD: ${{ secrets.OMNISCAN_KEY_PASSWORD }}
+          OMNISCAN_KEYSTORE_PASSWORD: ${{ steps.signing.outputs.mode == 'encrypted' && secrets.OMNISCAN_UPLOAD_PASSWORD || secrets.OMNISCAN_KEYSTORE_PASSWORD }}
+          OMNISCAN_KEY_ALIAS: ${{ steps.signing.outputs.mode == 'encrypted' && 'omniscan' || secrets.OMNISCAN_KEY_ALIAS }}
+          OMNISCAN_KEY_PASSWORD: ${{ steps.signing.outputs.mode == 'encrypted' && secrets.OMNISCAN_UPLOAD_PASSWORD || secrets.OMNISCAN_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon assembleRelease bundleRelease -PversionCode=$VERSION_CODE -PversionName=$VERSION_NAME
@@ -102,14 +110,15 @@ jobs:
           cp app/build/outputs/apk/release/app-release.apk ../out/OmniScan-$VERSION_NAME.apk
           cp app/build/outputs/bundle/release/app-release.aab ../out/OmniScan-$VERSION_NAME.aab
 
-      - name: Build debug APK (no signing secrets)
+      - name: Build debug APK + unsigned AAB (no signing secrets)
         if: steps.signing.outputs.keystore == ''
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon assembleDebug -PversionCode=$VERSION_CODE -PversionName=$VERSION_NAME
+          ./gradlew --no-daemon assembleDebug bundleRelease -PversionCode=$VERSION_CODE -PversionName=$VERSION_NAME
           mkdir -p ../out
           cp app/build/outputs/apk/debug/app-debug.apk ../out/OmniScan-$VERSION_NAME-debug.apk
+          cp app/build/outputs/bundle/release/app-release.aab ../out/OmniScan-$VERSION_NAME-unsigned.aab
 
       - name: Check the APK
         run: |
@@ -135,7 +144,7 @@ jobs:
           NOTES="OmniScan $VERSION_NAME: offline handwriting and document scanner.
 
           - **APK**: install directly on your Android phone (allow installs from this source when asked).
-          - **AAB**: upload this file to Google Play Console (only attached when release signing secrets are set).
+          - **AAB**: the Google Play bundle. Upload it as is when it is signed; an *-unsigned.aab* must be signed with the upload key first (jarsigner).
 
           Built from ${GITHUB_SHA::7}."
           gh release create "$TAG" out/* --title "OmniScan $VERSION_NAME" --notes "$NOTES" --target "$GITHUB_SHA"

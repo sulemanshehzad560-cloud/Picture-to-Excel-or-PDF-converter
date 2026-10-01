@@ -7,6 +7,7 @@ import "./styles.css";
 
 import { exportDocument, FORMATS } from "./export/index.js";
 import { drawList, hasLayout, pageModel } from "./export/replica.js";
+import { adPrivacyRequired, initAds, onAdsChange, setBannerVisible, showAdPrivacyOptions } from "./ads.js";
 import { deleteScan, listScans, saveScan } from "./history.js";
 import { initNativeChrome, isNative, nativeCamera, saveFile } from "./platform.js";
 
@@ -70,6 +71,8 @@ function toast(msg, isErr = false) {
 
 function show(view) {
   for (const v of ["captureView", "scanView", "resultView", "historyView"]) $("#" + v).classList.toggle("hidden", v !== view);
+  // No ad while a scan is running (the screen is all progress); back once it is done.
+  setBannerVisible(view !== "scanView");
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -130,7 +133,7 @@ const isImage = (f) => f.type.startsWith("image/") || /\.(jpe?g|png|webp|bmp|gif
 
 async function addFiles(list) {
   const incoming = [...list];
-  let added = 0;
+  let added = 0, failed = false;
   for (const f of incoming) {
     if (isPdf(f)) {
       try {
@@ -140,6 +143,8 @@ async function addFiles(list) {
         for (const p of pages) state.files.push({ file: p, url: URL.createObjectURL(p), rotation: 0, fromPdf: true });
         added += pages.length;
       } catch (err) {
+        failed = true;
+        console.error("PDF open failed", err);
         toast(`Could not open ${f.name}: ${err.message}`, true);
       }
     } else if (isImage(f)) {
@@ -147,7 +152,8 @@ async function addFiles(list) {
       added++;
     }
   }
-  if (!added && incoming.length) toast("Only images and PDFs can be scanned.", true);
+  // (A PDF that failed to open has already said why.)
+  if (!added && incoming.length && !failed) toast("Only images and PDFs can be scanned.", true);
   renderThumbs();
 }
 
@@ -621,9 +627,16 @@ function renderTable(b) {
   return frag;
 }
 
+/** "OmniScan 2026-10-01 0955": unique per scan, so a new scan never overwrites an earlier file. */
+function defaultName() {
+  const t = Number(String(state.result.id).replace(/\D/g, "")) || Date.now();
+  const d = new Date(t), p = (n) => String(n).padStart(2, "0");
+  return `OmniScan ${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}${p(d.getMinutes())}`;
+}
+
 async function download(fmt, { share = true } = {}) {
   try {
-    const file = await exportDocument(state.result.document, fmt, state.result.document.title || "scan", { layout: state.layout });
+    const file = await exportDocument(state.result.document, fmt, state.result.document.title || defaultName(), { layout: state.layout });
     const { where } = await saveFile(file, { share });
     if (!isNative) return;
     toast(`${file.filename} saved to ${where}`);
@@ -689,5 +702,8 @@ initNativeChrome();
 initIntake();
 initCamera();
 initControls();
+onAdsChange(() => $("#adPrivacyBtn").classList.toggle("hidden", !adPrivacyRequired()));
+$("#adPrivacyBtn").addEventListener("click", () => showAdPrivacyOptions().catch(() => toast("Ad privacy choices are unavailable offline", true)));
+initAds();
 renderThumbs();
 detectServerAI();

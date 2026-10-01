@@ -3,9 +3,11 @@
 const RENDER_LONG_SIDE = 3000; // enough pixels for small handwriting and decimal points
 
 export async function pdfToImages(file, onPage = () => {}) {
+  // The legacy build: the modern one needs JavaScript features (Map.getOrInsertComputed) that
+  // Android WebViews and many browsers do not have yet, and fails on every PDF there.
   const [pdfjs, { default: workerUrl }] = await Promise.all([
-    import("pdfjs-dist"),
-    import("pdfjs-dist/build/pdf.worker.min.mjs?url"),
+    import("pdfjs-dist/legacy/build/pdf.mjs"),
+    import("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url"),
   ]);
   pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
   const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
