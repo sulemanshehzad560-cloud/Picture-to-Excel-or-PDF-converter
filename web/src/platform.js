@@ -64,12 +64,17 @@ export async function saveFile({ bytes, mime, filename }, { share = true } = {})
 export async function initNativeChrome() {
   if (!isNative) return;
   try {
-    const { StatusBar, Style } = await import("@capacitor/status-bar");
-    await StatusBar.setStyle({ style: Style.Dark });
-    await StatusBar.setBackgroundColor({ color: "#05070d" });
-  } catch { /* not available on every device */ }
-  try {
     const { SplashScreen } = await import("@capacitor/splash-screen");
     await SplashScreen.hide();
   } catch { /* ignore */ }
+}
+
+/** Match the Android status bar to the app's light or dark theme. */
+export async function setNativeTheme(dark) {
+  if (!isNative) return;
+  try {
+    const { StatusBar, Style } = await import("@capacitor/status-bar");
+    await StatusBar.setStyle({ style: dark ? Style.Dark : Style.Light });
+    await StatusBar.setBackgroundColor({ color: dark ? "#0b1020" : "#f4f6fb" });
+  } catch { /* not available on every device */ }
 }

@@ -24,7 +24,7 @@ OmniScan is free and shows one small banner ad at the bottom of the screen, serv
   uses this data: https://policies.google.com/technologies/partner-sites
 - In the EEA, the UK and Switzerland (and where else the law requires it) we ask for your
   consent first with Google's consent form. You can change your choice any time with
-  **Ad privacy choices** at the bottom of the app's start screen.
+  **Settings → Ad privacy choices**.
 - You can reset or delete your advertising ID, or opt out of personalised ads, in your phone's
   **Settings → Google → Ads** (or **Settings → Privacy → Ads**).
 - Ads never see your scans, the recognised text or your files.

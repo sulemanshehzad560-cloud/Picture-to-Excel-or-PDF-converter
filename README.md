@@ -37,6 +37,9 @@ get it back as **Excel, Word, PDF, CSV, Markdown, text or JSON**. You choose the
   indented description line under each item keep their columns. When the page's corners are
   out of the frame, the desk, keyboard or other papers around it are blanked out, and a curled
   page's rows are straightened before rows are formed.
+- **A real app.** Scan, Files and Settings tabs; light and dark themes (following the phone);
+  a page tray to reorder and rotate pages; an export sheet; **Review** jumps from one doubtful
+  reading to the next; scans can be renamed and searched (by name or by any text in them).
 - Multi-page scans, camera, gallery and scanned-PDF input, per-page rotation, automatic page
   flattening and straightening, and a history of recent scans (stored on the device only).
 

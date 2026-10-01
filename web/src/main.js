@@ -1,15 +1,11 @@
-import "@fontsource/space-grotesk/400.css";
-import "@fontsource/space-grotesk/600.css";
-import "@fontsource/space-grotesk/700.css";
-import "@fontsource/jetbrains-mono/400.css";
-import "@fontsource/jetbrains-mono/600.css";
+import "@fontsource-variable/inter";
 import "./styles.css";
 
 import { exportDocument, FORMATS } from "./export/index.js";
 import { drawList, hasLayout, pageModel } from "./export/replica.js";
 import { adPrivacyRequired, initAds, onAdsChange, setBannerVisible, showAdPrivacyOptions } from "./ads.js";
 import { deleteScan, listScans, saveScan } from "./history.js";
-import { initNativeChrome, isNative, nativeCamera, saveFile } from "./platform.js";
+import { initNativeChrome, isNative, nativeCamera, saveFile, setNativeTheme } from "./platform.js";
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -24,30 +20,42 @@ const state = {
   precision: "high",
   formats: new Set(["xlsx"]),
   layout: "page", // "page": Excel/Word/PDF copy the scanned page; "data": tables and fields only
-  docMode: "page", // result view: "page" copy preview or "edit" blocks
-  result: null, // {document, pages: [{page, steps, seconds, enhanced_preview, original}], seconds, engine_label}
+  docMode: "page", // result view: "page" copy, "edit" blocks, "original" photo (phones)
+  theme: "system",
+  result: null, // {id, document, pages: [{page, steps, seconds, enhanced_preview, original}], seconds, engine_label}
   page: 0,
   imgMode: "original",
   serverAI: false,
+  scanning: false,
 };
 
 const PRECISION_HINT = {
   fast: "One pass. Quickest, fine for neat writing and print.",
-  high: "Straightens the page, double-checks every doubtful word on an enhanced copy, and fixes misread digits.",
-  max: "Also zooms into the page in tiles to catch tiny marks, and re-reads doubtful words at a second scale. Slowest.",
+  high: "Straightens the page, double-checks every doubtful word and fixes misread digits.",
+  max: "Also zooms in to catch tiny marks and re-reads doubtful words at a second scale. Slowest.",
 };
 const LAYOUT_HINT = {
-  page: "Each scanned page comes back as one page that looks like it: same places, sizes, shading and lines. Numbers stay real numbers.",
-  data: "Just the data: each table on its own sheet, fields and text in a list, in a clean document.",
+  page: "Each page comes back looking like the paper: same places, sizes, shading and lines.",
+  data: "Just the data: each table on its own sheet, fields and text in a clean list.",
+};
+const FORMAT_INFO = {
+  xlsx: "Spreadsheet: tables become real cells",
+  docx: "Editable document with the same layout",
+  pdf: "The page as scanned, ready to print or send",
+  csv: "Raw table data for any spreadsheet",
+  md: "Text and tables for notes apps",
+  txt: "Plain text",
+  json: "Structured data for developers",
 };
 const STEP_LABEL = {
-  prepare: "Finding the page, flattening",
+  prepare: "Finding and flattening the page",
   detect: "Locating every line of text",
   tiles: "Zooming in for small marks",
-  recognize: "Reading handwriting & print",
+  recognize: "Reading handwriting and print",
   reread: "Double-checking doubtful words",
-  layout: "Rebuilding tables, forms & layout",
+  layout: "Rebuilding tables, forms and layout",
 };
+const RING = 2 * Math.PI * 52;
 
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -59,6 +67,15 @@ function el(tag, attrs = {}, ...children) {
   for (const c of children.flat()) if (c != null) node.append(c instanceof Node ? c : document.createTextNode(c));
   return node;
 }
+const SVG = "http://www.w3.org/2000/svg";
+function icon(name, cls = "i") {
+  const s = document.createElementNS(SVG, "svg");
+  s.setAttribute("class", cls);
+  const u = document.createElementNS(SVG, "use");
+  u.setAttribute("href", `#i-${name}`);
+  s.append(u);
+  return s;
+}
 
 function toast(msg, isErr = false) {
   const t = $("#toast");
@@ -69,11 +86,18 @@ function toast(msg, isErr = false) {
   toast.timer = setTimeout(() => t.classList.remove("show"), isErr ? 6000 : 3200);
 }
 
+const VIEWS = ["captureView", "scanView", "resultView", "historyView", "settingsView"];
+const TAB_OF = { captureView: "captureView", scanView: "captureView", resultView: "captureView", historyView: "historyView", settingsView: "settingsView" };
+
 function show(view) {
-  for (const v of ["captureView", "scanView", "resultView", "historyView"]) $("#" + v).classList.toggle("hidden", v !== view);
-  // No ad while a scan is running (the screen is all progress); back once it is done.
+  for (const v of VIEWS) $("#" + v).classList.toggle("hidden", v !== view);
+  $$(".nav-item").forEach((b) => b.classList.toggle("on", b.dataset.tab === TAB_OF[view]));
+  // While a scan runs the screen is all progress: no navigation, no ad.
+  $(".nav").classList.toggle("hidden", view === "scanView");
   setBannerVisible(view !== "scanView");
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  if (view === "historyView") renderFiles();
+  if (view === "captureView") renderRecent();
+  window.scrollTo({ top: 0 });
 }
 
 /* ---------------- OCR worker ---------------- */
@@ -85,7 +109,7 @@ let jobSeq = 0;
 worker.onmessage = ({ data }) => {
   if (data.type === "ready") {
     engineReady = true;
-    setStatus("ok", `On-device engine ready${data.threads > 1 ? ` · ${data.threads} threads` : ""}`);
+    setStatus("ok", `Engine ready${data.threads > 1 ? ` · ${data.threads} cores` : ""}`);
     return;
   }
   const job = pending.get(data.id);
@@ -112,8 +136,9 @@ function recognize(file, onStep) {
 
 function setStatus(kind, text) {
   const pill = $("#engineStatus");
-  pill.className = `pill ${kind}`;
+  pill.className = `status ${kind}`;
   pill.lastElementChild.textContent = text;
+  $("#aboutLine").textContent = `On-device handwriting and document scanner · ${text}`;
 }
 
 async function detectServerAI() {
@@ -139,7 +164,7 @@ async function addFiles(list) {
       try {
         toast(`Opening ${f.name}…`);
         const { pdfToImages } = await import("./pdfpages.js");
-        const pages = await pdfToImages(f, (n, total) => toast(`Rendering PDF page ${n} of ${total}…`));
+        const pages = await pdfToImages(f, (n, total) => toast(`Reading PDF page ${n} of ${total}…`));
         for (const p of pages) state.files.push({ file: p, url: URL.createObjectURL(p), rotation: 0, fromPdf: true });
         added += pages.length;
       } catch (err) {
@@ -154,6 +179,7 @@ async function addFiles(list) {
   }
   // (A PDF that failed to open has already said why.)
   if (!added && incoming.length && !failed) toast("Only images and PDFs can be scanned.", true);
+  if (added) toast(`${added} page${added > 1 ? "s" : ""} added`);
   renderThumbs();
 }
 
@@ -165,19 +191,19 @@ function renderThumbs() {
     img.style.transform = `rotate(${f.rotation}deg)`;
     const t = el("div", { class: "thumb", draggable: "true" },
       img,
-      el("span", { class: "num" }, `P${i + 1}`),
+      el("span", { class: "num" }, String(i + 1)),
       f.fromPdf ? el("span", { class: "pdf-badge" }, "PDF") : null,
       el("button", { class: "rot", title: "Rotate", "aria-label": `Rotate page ${i + 1}`, onclick: (ev) => {
         ev.stopPropagation();
         f.rotation = (f.rotation + 90) % 360;
         img.style.transform = `rotate(${f.rotation}deg)`;
-      } }, "⟳"),
+      } }, icon("rotate")),
       el("button", { class: "rm", title: "Remove", "aria-label": `Remove page ${i + 1}`, onclick: (ev) => {
         ev.stopPropagation();
         URL.revokeObjectURL(f.url);
         state.files.splice(i, 1);
         renderThumbs();
-      } }, "×"));
+      } }, icon("x")));
     t.addEventListener("dragstart", (ev) => { t.classList.add("dragging"); ev.dataTransfer.setData("text/x-page", String(i)); });
     t.addEventListener("dragend", () => t.classList.remove("dragging"));
     t.addEventListener("dragover", (ev) => { if (ev.dataTransfer.types.includes("text/x-page")) ev.preventDefault(); });
@@ -191,31 +217,42 @@ function renderThumbs() {
     });
     box.append(t);
   });
+  if (state.files.length) {
+    box.append(el("button", { class: "thumb add", "aria-label": "Add more pages", onclick: () => $("#fileInput").click() }, icon("plus")));
+  }
   const n = state.files.length;
-  $("#thumbHint").classList.toggle("hidden", n < 1);
+  $("#tray").classList.toggle("hidden", n < 1);
+  $("#pageCount").textContent = String(n);
   $("#scanBtn").disabled = n === 0 || state.formats.size === 0;
   $("#scanLabel").textContent = n === 0 ? "Add a page to start"
-    : state.formats.size === 0 ? "Pick an output format"
+    : state.formats.size === 0 ? "Pick an export format"
     : `Scan ${n} page${n > 1 ? "s" : ""} → ${[...state.formats].map((f) => FORMATS[f].label).join(", ")}`;
 }
 
 function initIntake() {
   const dz = $("#dropzone");
-  const input = $("#fileInput");
-  dz.addEventListener("click", (e) => { if (!e.target.closest("button")) input.click(); });
-  dz.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); } });
+  const input = $("#fileInput"), pdfInput = $("#pdfInput");
+  dz.addEventListener("keydown", (e) => { if (e.target === dz && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); input.click(); } });
   $("#browseBtn").addEventListener("click", () => input.click());
-  input.addEventListener("change", () => { addFiles(input.files); input.value = ""; });
-  ["dragenter", "dragover"].forEach((t) => dz.addEventListener(t, (e) => {
-    if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); dz.classList.add("drag"); }
+  $("#pdfBtn").addEventListener("click", () => pdfInput.click());
+  for (const inp of [input, pdfInput]) inp.addEventListener("change", () => { addFiles(inp.files); inp.value = ""; });
+  ["dragenter", "dragover"].forEach((t) => document.addEventListener(t, (e) => {
+    if (e.dataTransfer?.types.includes("Files") && !$("#captureView").classList.contains("hidden")) { e.preventDefault(); dz.classList.add("drag"); }
   }));
-  ["dragleave", "drop"].forEach((t) => dz.addEventListener(t, () => dz.classList.remove("drag")));
-  dz.addEventListener("drop", (e) => { if (e.dataTransfer.files.length) { e.preventDefault(); addFiles(e.dataTransfer.files); } });
+  ["dragleave", "drop"].forEach((t) => document.addEventListener(t, () => dz.classList.remove("drag")));
+  document.addEventListener("drop", (e) => {
+    if (e.dataTransfer?.files.length && !$("#captureView").classList.contains("hidden")) { e.preventDefault(); addFiles(e.dataTransfer.files); }
+  });
   document.addEventListener("paste", (e) => {
     const files = [...(e.clipboardData?.files || [])];
     if (files.length && !$("#captureView").classList.contains("hidden")) addFiles(files);
   });
   $("#cameraBtn").addEventListener("click", openCamera);
+  $("#clearPages").addEventListener("click", () => {
+    state.files.forEach((f) => URL.revokeObjectURL(f.url));
+    state.files = [];
+    renderThumbs();
+  });
 }
 
 /* ---------------- camera ---------------- */
@@ -265,25 +302,41 @@ function initCamera() {
   });
 }
 
-/* ---------------- controls ---------------- */
+/* ---------------- settings & controls ---------------- */
+function applyTheme() {
+  const t = state.theme;
+  if (t === "system") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = t;
+  const dark = t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+  setNativeTheme(dark);
+}
+
+/** Set a choice everywhere it is shown (the same setting appears on Home, in Settings, in Export). */
+function setChoice(name, value, { save = true } = {}) {
+  $$(`.seg[data-name=${name}]`).forEach((seg) => $$("button", seg).forEach((x) => x.classList.toggle("on", x.dataset.value === value)));
+  if (name === "imgmode") { state.imgMode = value; renderViewer(); return; }
+  if (name === "docMode") { state.docMode = value; renderDoc(); return; }
+  state[name] = value;
+  if (save) store.set(name, value);
+  if (name === "precision") { $("#precisionHint").textContent = PRECISION_HINT[value]; $("#precisionHint2").textContent = PRECISION_HINT[value]; }
+  if (name === "layout") $("#layoutHint").textContent = LAYOUT_HINT[value];
+  if (name === "theme") applyTheme();
+}
+
 function initControls() {
   $$(".seg").forEach((seg) => seg.addEventListener("click", (e) => {
     const b = e.target.closest("button");
-    if (!b) return;
-    $$("button", seg).forEach((x) => x.classList.toggle("on", x === b));
-    const name = seg.dataset.name;
-    if (name === "imgmode") { state.imgMode = b.dataset.value; renderViewer(); return; }
-    state[name] = b.dataset.value;
-    store.set(name, b.dataset.value);
-    if (name === "precision") $("#precisionHint").textContent = PRECISION_HINT[b.dataset.value];
-    if (name === "layout") $("#layoutHint").textContent = LAYOUT_HINT[b.dataset.value];
+    if (b) setChoice(seg.dataset.name, b.dataset.value);
   }));
-  const savedLayout = store.get("layout");
-  if (savedLayout) $(`.seg[data-name=layout] button[data-value=${savedLayout}]`)?.click();
-  $("#layoutHint").textContent = LAYOUT_HINT[state.layout];
-  const saved = store.get("precision");
-  if (saved) $(`.seg[data-name=precision] button[data-value=${saved}]`)?.click();
-  $("#precisionHint").textContent = PRECISION_HINT[state.precision];
+  for (const name of ["layout", "precision", "theme"]) setChoice(name, store.get(name, state[name]), { save: false });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", applyTheme);
+
+  for (const id of ["flatten", "autoExport"]) {
+    const box = $("#" + id);
+    const saved = store.get(id);
+    if (saved) box.checked = saved === "1";
+    box.addEventListener("change", () => store.set(id, box.checked ? "1" : "0"));
+  }
 
   const savedFormats = store.get("formats");
   if (savedFormats) state.formats = new Set(savedFormats.split(",").filter((f) => FORMATS[f]));
@@ -298,15 +351,37 @@ function initControls() {
     });
   });
 
+  $$(".nav-item").forEach((b) => b.addEventListener("click", () => {
+    if (state.scanning) return;
+    // "Scan" returns to the open result if there is one being worked on, else to the home screen.
+    show(b.dataset.tab);
+  }));
+  $("#seeAllBtn").addEventListener("click", () => show("historyView"));
   $("#scanBtn").addEventListener("click", runScan);
   $("#newScanBtn").addEventListener("click", () => show("captureView"));
-  $("#homeBtn").addEventListener("click", () => { if ($("#scanView").classList.contains("hidden")) show("captureView"); });
-  $("#historyBtn").addEventListener("click", openHistory);
   $("#copyBtn").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText(docText(state.result.document)); toast("Text copied"); }
     catch { toast("Clipboard is blocked here", true); }
   });
+  $("#zoomBtn").addEventListener("click", () => $("#viewerImg").classList.toggle("zoom"));
   $("#viewerImg").addEventListener("click", () => $("#viewerImg").classList.toggle("zoom"));
+  $("#exportBtn").addEventListener("click", openExport);
+  $("#exportClose").addEventListener("click", () => $("#exportDlg").close());
+  $("#exportDlg").addEventListener("click", (e) => { if (e.target === $("#exportDlg")) $("#exportDlg").close(); });
+  $("#reviewBtn").addEventListener("click", reviewNext);
+  $("#docTitle").addEventListener("input", (e) => {
+    state.result.document.title = e.target.value.trim() || null;
+    scheduleHistorySave();
+  });
+  $("#fileSearch").addEventListener("input", () => renderFiles());
+  $("#clearHistoryBtn").addEventListener("click", async () => {
+    const scans = await listScans();
+    if (!scans.length) { toast("There are no recent scans"); return; }
+    if (!confirm(`Delete all ${scans.length} recent scans from this device?`)) return;
+    for (const s of scans) await deleteScan(s.id);
+    toast("Recent scans deleted");
+    renderRecent();
+  });
 }
 
 /* ---------------- scanning ---------------- */
@@ -334,10 +409,17 @@ async function thumbFromFile(file, rotation, max = 480) {
   return c.toDataURL("image/jpeg", 0.8);
 }
 
+function setProgress(frac) {
+  const f = Math.max(0, Math.min(1, frac));
+  $("#progressRing").style.strokeDashoffset = String(RING * (1 - f));
+  $("#progressPct").textContent = `${Math.round(f * 100)}%`;
+}
+
 async function runScan() {
   const files = [...state.files];
+  state.scanning = true;
   show("scanView");
-  $("#scanCount").textContent = files.length > 1 ? `${files.length} pages` : "";
+  setProgress(0);
   const t0 = performance.now();
   const ticker = setInterval(() => { $("#scanTimer").textContent = `${((performance.now() - t0) / 1000).toFixed(1)} s`; }, 100);
   const pages = [], blocksByPage = [], sizes = [];
@@ -350,6 +432,7 @@ async function runScan() {
         const f = files[i];
         $("#scanImg").src = f.url;
         $("#scanImg").style.transform = `rotate(${f.rotation}deg)`;
+        $("#scanCount").textContent = files.length > 1 ? `Page ${i + 1} of ${files.length}` : "Reading";
         const order = ["prepare", "detect", ...(state.precision === "max" ? ["tiles"] : []), "recognize",
           ...(state.precision !== "fast" ? ["reread"] : []), "layout"];
         const list = $("#scanSteps");
@@ -357,7 +440,7 @@ async function runScan() {
         const mark = (step) => {
           const idx = order.indexOf(step);
           $$("li", list).forEach((li, k) => { li.className = k < idx ? "done" : k === idx ? "active" : ""; });
-          $("#progressBar").style.width = `${((i + Math.max(0, idx) / order.length) / files.length) * 100}%`;
+          setProgress((i + Math.max(0, idx) / order.length) / files.length);
         };
         mark("prepare");
         const pt0 = performance.now();
@@ -373,7 +456,7 @@ async function runScan() {
         });
       }
     }
-    $("#progressBar").style.width = "100%";
+    setProgress(1);
     const document_ = { title: null, pages: blocksByPage.map((blocks, i) => ({ page_number: i + 1, blocks, notes: null, ...(sizes[i] || {}) })) };
     const headed = blocksByPage.flat().find((b) => b.type === "heading");
     document_.title = headed?.text?.split("\n")[0].slice(0, 80) || null;
@@ -386,14 +469,16 @@ async function runScan() {
     };
     state.page = 0;
     state.imgMode = "original";
-    renderResult();
-    show("resultView");
+    state.scanning = false;
+    openResult();
     persist(files);
-    await downloadAll();
+    if ($("#autoExport").checked) await downloadAll();
   } catch (err) {
+    state.scanning = false;
     toast(err.message, true);
     show("captureView");
   } finally {
+    state.scanning = false;
     clearInterval(ticker);
   }
 }
@@ -420,15 +505,11 @@ async function persist(files) {
   try {
     const thumb = await thumbFromFile(files[0].file, files[0].rotation);
     await saveScan({
-      id: r.id, created: Date.now(), title: r.document.title || firstLine(r.document) || "Untitled scan",
+      id: r.id, created: Date.now(), title: r.document.title || defaultName(),
       pageCount: r.pages.length, thumb, document: r.document,
       pages: r.pages.map(({ original, ...p }) => p), // original blobs are session-only; the enhanced preview is kept
     });
   } catch { /* history is best-effort */ }
-}
-
-function firstLine(doc) {
-  return docText(doc).split("\n").find((l) => l.trim())?.slice(0, 60);
 }
 
 /* ---------------- results ---------------- */
@@ -454,23 +535,34 @@ function docText(doc) {
   return lines.join("\n\n");
 }
 
+function openResult() {
+  const doc = state.result.document;
+  state.docMode = doc.pages.some(hasLayout) ? "page" : "edit";
+  setChoice("docMode", state.docMode);
+  $("#docTitle").value = doc.title || "";
+  $("#docTitle").placeholder = defaultName();
+  renderResult();
+  show("resultView");
+}
+
 function renderResult() {
   const { document: doc, pages, seconds, engine_label } = state.result;
-  const blocks = doc.pages.reduce((n, p) => n + p.blocks.length, 0);
   const tables = doc.pages.reduce((n, p) => n + p.blocks.filter((b) => b.type === "table").length, 0);
   const unc = countUncertain(doc);
-  const stat = (v, label, cls = "") => el("div", { class: "stat " + cls }, el("b", {}, String(v)), el("span", {}, label));
+  const chip = (ic, text, cls = "", attrs = {}) => el("span", { class: `chip ${cls}`, ...attrs }, icon(ic), text);
   $("#stats").replaceChildren(
-    stat(pages.length, pages.length === 1 ? "page" : "pages"),
-    stat(blocks, "blocks"),
-    stat(tables, tables === 1 ? "table" : "tables"),
-    stat(unc, "to verify", unc ? "warn" : "good"),
-    stat(`${seconds}s`, engine_label),
+    chip("files", `${pages.length} page${pages.length === 1 ? "" : "s"}`),
+    chip("table", `${tables} table${tables === 1 ? "" : "s"}`),
+    unc ? chip("alert", `${unc} to check`, "warn", { role: "button", onclick: reviewNext }) : chip("check", "All readings confident", "ok"),
+    chip("bolt", `${seconds}s · ${engine_label}`),
   );
-  $("#dlGroup").replaceChildren(...Object.keys(FORMATS).map((f) =>
-    el("button", { class: "btn " + (state.formats.has(f) ? "primary" : "ghost"), onclick: () => download(f) }, `⬇ ${FORMATS[f].label}`)));
+  $("#reviewBtn").classList.toggle("hidden", !unc);
+  $("#reviewBtn").classList.toggle("has-review", !!unc);
+  $("#reviewBtn span").textContent = `Review ${unc}`;
   $("#pageTabs").replaceChildren(...(pages.length > 1 ? pages.map((p, i) =>
     el("button", { class: i === state.page ? "on" : "", onclick: () => { state.page = i; renderResult(); } }, `Page ${p.page}`)) : []));
+  const page = doc.pages[state.page];
+  $("#docModeSeg").querySelector('[data-value="page"]').classList.toggle("hidden", !hasLayout(page));
   const hasOriginal = !!pages[state.page]?.original;
   $(".seg[data-name=imgmode]").classList.toggle("hidden", !hasOriginal);
   if (!hasOriginal) state.imgMode = "enhanced";
@@ -502,32 +594,52 @@ function scheduleHistorySave() {
   saveTimer = setTimeout(async () => {
     const r = state.result;
     const existing = (await listScans()).find((s) => s.id === r.id);
-    if (existing) await saveScan({ ...existing, document: r.document });
+    if (existing) await saveScan({ ...existing, title: r.document.title || existing.title, document: r.document });
   }, 800);
 }
 
 function renderDoc() {
+  if (!state.result) return;
   const page = state.result.document.pages[state.page];
   const view = $("#docView");
+  const grid = $(".grid-result");
+  grid.classList.toggle("show-original", state.docMode === "original");
   view.replaceChildren();
-  if (page.blocks.length && hasLayout(page)) {
-    const seg = el("div", { class: "seg small doc-mode" },
-      ...[["page", "Page copy"], ["edit", "Edit text"]].map(([v, label]) => el("button", {
-        class: state.docMode === v ? "on" : "",
-        onclick: () => { state.docMode = v; renderDoc(); },
-      }, label)));
-    view.append(seg);
-    if (state.docMode === "page") {
-      view.append(renderPageCopy(page), el("p", { class: "muted small" }, "How Excel, Word and PDF will look. Switch to Edit text to correct anything."));
-      return;
-    }
-  }
   if (!page.blocks.length) {
-    view.append(el("p", { class: "empty" }, "No text was found on this page. Try rotating it or turning page flattening off."));
+    view.append(el("p", { class: "empty" }, icon("info"), "No text was found on this page. Try rotating it, or turn off “Find and flatten the page” in Settings."));
     return;
   }
+  if (state.docMode === "page" && hasLayout(page)) {
+    view.append(renderPageCopy(page), el("p", { class: "muted small" }, "This is how Excel, Word and PDF will look. Tap Edit to correct anything."));
+    return;
+  }
+  view.append(el("div", { class: "legend muted small" },
+    el("span", {}, el("i", { class: "sw unc" }), "Low-confidence reading"),
+    el("span", {}, "Tap any text or cell to edit it. Exports include your edits.")));
   for (const b of page.blocks) view.append(renderBlock(b));
   if (page.notes) view.append(el("div", { class: "note" }, "Scanner note: " + page.notes));
+}
+
+/** Jump to the next doubtful reading (switching to Edit and to its page as needed). */
+function reviewNext() {
+  if (!state.result) return;
+  if (state.docMode !== "edit") setChoice("docMode", "edit");
+  let marks = $$("#docView .blk .unc");
+  if (!marks.length) {
+    const pages = state.result.document.pages;
+    for (let k = 1; k <= pages.length; k++) {
+      const p = (state.page + k) % pages.length;
+      if (countUncertain({ pages: [pages[p]] })) { state.page = p; renderResult(); break; }
+    }
+    marks = $$("#docView .blk .unc");
+    if (!marks.length) { toast("Nothing left to check"); return; }
+  }
+  reviewNext.i = ((reviewNext.i ?? -1) + 1) % marks.length;
+  const m = marks[reviewNext.i];
+  $$("#docView .focus-ring").forEach((x) => x.classList.remove("focus-ring"));
+  m.classList.add("focus-ring");
+  m.scrollIntoView({ behavior: "smooth", block: "center" });
+  m.focus({ preventScroll: true });
 }
 
 /** The page copy, drawn from the same model the Excel / Word / PDF exporters use. */
@@ -612,14 +724,14 @@ function renderTable(b) {
     });
     const width = b.rows?.[0]?.length || 1;
     const blank = () => ({ text: "", uncertain: false });
-    const edit = (fn) => () => { fn(); draw(); scheduleHistorySave(); };
+    const edit = (fn) => () => { fn(); draw(); renderResultChips(); scheduleHistorySave(); };
     const tools = el("div", { class: "tbl-tools" },
-      el("button", { onclick: edit(() => b.rows.push(Array.from({ length: width }, blank))) }, "+ row"),
-      el("button", { onclick: edit(() => b.rows.forEach((r) => r.push(blank()))) }, "+ column"),
-      el("button", { onclick: edit(() => { if (b.rows.length > 1) b.rows.pop(); }) }, "− row"),
-      el("button", { onclick: edit(() => { if (width > 1) b.rows.forEach((r) => r.pop()); }) }, "− column"),
-      el("button", { onclick: edit(() => { b.header_rows = b.header_rows ? 0 : 1; }) }, "toggle header"),
-      el("button", { onclick: edit(() => { b.rows.flat().forEach((c) => { c.uncertain = false; }); b.uncertain = false; }) }, "mark verified"));
+      el("button", { onclick: edit(() => b.rows.push(Array.from({ length: width }, blank))) }, "+ Row"),
+      el("button", { onclick: edit(() => b.rows.forEach((r) => r.push(blank()))) }, "+ Column"),
+      el("button", { onclick: edit(() => { if (b.rows.length > 1) b.rows.pop(); }) }, "− Row"),
+      el("button", { onclick: edit(() => { if (width > 1) b.rows.forEach((r) => r.pop()); }) }, "− Column"),
+      el("button", { onclick: edit(() => { b.header_rows = b.header_rows ? 0 : 1; }) }, "Header row"),
+      el("button", { onclick: edit(() => { b.rows.flat().forEach((c) => { c.uncertain = false; }); b.uncertain = false; }) }, "✓ Mark checked"));
     frag.replaceChildren(el("div", { class: "tbl-wrap" }, table), tools);
   };
   if (!b.rows?.length) b.rows = [[{ text: "", uncertain: false }]];
@@ -627,11 +739,35 @@ function renderTable(b) {
   return frag;
 }
 
+function renderResultChips() {
+  const keep = state.docMode;
+  renderResult();
+  state.docMode = keep;
+}
+
+/* ---------------- export ---------------- */
 /** "OmniScan 2026-10-01 0955": unique per scan, so a new scan never overwrites an earlier file. */
 function defaultName() {
-  const t = Number(String(state.result.id).replace(/\D/g, "")) || Date.now();
+  const t = Number(String(state.result?.id || "").replace(/\D/g, "")) || Date.now();
   const d = new Date(t), p = (n) => String(n).padStart(2, "0");
   return `OmniScan ${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}${p(d.getMinutes())}`;
+}
+
+function openExport() {
+  const list = $("#dlGroup");
+  list.replaceChildren(...Object.keys(FORMATS).map((f) => {
+    const item = el("button", { class: "export-item", "data-fmt": f },
+      el("span", { class: `fmt-ic ${{ xlsx: "x", docx: "w", pdf: "p", csv: "c", md: "m", txt: "t", json: "j" }[f]}` }, { xlsx: "XLS", docx: "DOC", pdf: "PDF", csv: "CSV", md: "MD", txt: "TXT", json: "{ }" }[f]),
+      el("div", {}, el("b", {}, FORMATS[f].label), el("small", {}, FORMAT_INFO[f])),
+      icon(isNative ? "share" : "chev"));
+    item.addEventListener("click", async () => {
+      item.classList.add("busy");
+      await download(f);
+      item.classList.remove("busy");
+    });
+    return item;
+  }));
+  $("#exportDlg").showModal();
 }
 
 async function download(fmt, { share = true } = {}) {
@@ -653,24 +789,50 @@ async function downloadAll() {
   } else {
     for (const f of fmts) await download(f);
   }
-  if (!isNative) toast(`Ready: ${fmts.map((f) => FORMATS[f].label).join(", ")} downloaded. Edit below and download again any time.`);
+  if (!isNative) toast(`Saved: ${fmts.map((f) => FORMATS[f].label).join(", ")}. Edit and export again any time.`);
 }
 
-/* ---------------- history ---------------- */
-async function openHistory() {
-  const scans = await listScans();
-  const list = $("#historyList");
-  list.replaceChildren(...(scans.length ? scans.map((s) => el("div", { class: "hcard", role: "button", tabindex: "0", onclick: () => reopen(s) },
+/* ---------------- files ---------------- */
+function fileRow(s, { actions = true } = {}) {
+  const date = new Date(s.created).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  const row = el("div", { class: "file", role: "button", tabindex: "0", onclick: () => reopen(s), onkeydown: (e) => { if (e.key === "Enter") reopen(s); } },
     el("img", { src: s.thumb, alt: "" }),
-    el("button", { class: "del", title: "Delete", "aria-label": "Delete scan", onclick: async (ev) => {
-      ev.stopPropagation();
-      await deleteScan(s.id);
-      openHistory();
-    } }, "×"),
-    el("div", { class: "meta" }, el("b", {}, s.title),
-      el("span", { class: "muted small" }, `${new Date(s.created).toLocaleString()} · ${s.pageCount} page${s.pageCount > 1 ? "s" : ""}`)),
-  )) : [el("p", { class: "empty" }, "No scans yet. Your scans will appear here, stored on this device only.")]));
-  show("historyView");
+    el("div", { class: "file-meta" }, el("b", {}, s.title), el("small", {}, `${date} · ${s.pageCount} page${s.pageCount > 1 ? "s" : ""}`)));
+  if (actions) {
+    row.append(el("div", { class: "file-actions" },
+      el("button", { class: "icon-btn small", title: "Rename", "aria-label": "Rename scan", onclick: async (ev) => {
+        ev.stopPropagation();
+        const name = prompt("Rename scan", s.title);
+        if (!name?.trim()) return;
+        s.title = name.trim();
+        s.document = { ...s.document, title: s.title };
+        await saveScan(s);
+        renderFiles();
+      } }, icon("edit")),
+      el("button", { class: "icon-btn small", title: "Delete", "aria-label": "Delete scan", onclick: async (ev) => {
+        ev.stopPropagation();
+        if (!confirm(`Delete “${s.title}”?`)) return;
+        await deleteScan(s.id);
+        renderFiles();
+      } }, icon("trash"))));
+  }
+  return row;
+}
+
+const emptyFiles = (text) => el("div", { class: "empty" }, icon("files"), text);
+
+async function renderFiles() {
+  const q = $("#fileSearch").value.trim().toLowerCase();
+  const scans = (await listScans()).filter((s) => !q || s.title.toLowerCase().includes(q) || docText(s.document).toLowerCase().includes(q));
+  $("#historyList").replaceChildren(...(scans.length ? scans.map((s) => fileRow(s))
+    : [emptyFiles(q ? "No scans match your search." : "No scans yet. Your scans will appear here, stored on this device only.")]));
+}
+
+async function renderRecent() {
+  const scans = (await listScans()).slice(0, 4);
+  $("#recentList").replaceChildren(...(scans.length ? scans.map((s) => fileRow(s, { actions: false }))
+    : [emptyFiles("Your recent scans will appear here.")]));
+  $("#seeAllBtn").classList.toggle("hidden", !scans.length);
 }
 
 function reopen(scan) {
@@ -679,12 +841,12 @@ function reopen(scan) {
     document: scan.document,
     pages: scan.pages,
     seconds: scan.pages.reduce((s, p) => s + (p.seconds || 0), 0).toFixed(1),
-    engine_label: "From history",
+    engine_label: "From Files",
   };
+  if (!state.result.document.title && scan.title) state.result.document.title = scan.title;
   state.page = 0;
   state.imgMode = "enhanced";
-  renderResult();
-  show("resultView");
+  openResult();
 }
 
 /* ---------------- boot ---------------- */
@@ -705,5 +867,6 @@ initControls();
 onAdsChange(() => $("#adPrivacyBtn").classList.toggle("hidden", !adPrivacyRequired()));
 $("#adPrivacyBtn").addEventListener("click", () => showAdPrivacyOptions().catch(() => toast("Ad privacy choices are unavailable offline", true)));
 initAds();
-renderThumbs();
 detectServerAI();
+renderThumbs();
+renderRecent();
